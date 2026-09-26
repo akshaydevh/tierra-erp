@@ -1,0 +1,64 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: tierra
+      POSTGRES_PASSWORD: tierra
+      POSTGRES_DB: tierra
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./docker/postgres/init.sql:/docker-entrypoint-initdb.d/01-evolution.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U tierra -d tierra"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+
+  evolution:
+    build: ./whatsapp/evolution
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      AUTHENTICATION_API_KEY: ${EVOLUTION_API_KEY:-tierra-evolution-key}
+      DATABASE_ENABLED: "true"
+      DATABASE_PROVIDER: postgresql
+      DATABASE_CONNECTION_URI: postgresql://tierra:tierra@postgres:5432/evolution
+      CACHE_REDIS_ENABLED: "true"
+      CACHE_REDIS_URI: redis://redis:6379/1
+      CONFIG_SESSION_PHONE_CLIENT: Tierra
+      CONFIG_SESSION_PHONE_NAME: Chrome
+    ports:
+      - "8081:8080"
+
+  api:
+    build: ./backend
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://tierra:tierra@postgres:5432/tierra
+      PORT: "3002"
+      EVOLUTION_URL: http://evolution:8080
+      EVOLUTION_API_KEY: ${EVOLUTION_API_KEY:-tierra-evolution-key}
+      EVOLUTION_WEBHOOK_SECRET: ${EVOLUTION_WEBHOOK_SECRET:-tierra-webhook-secret}
+      EVOLUTION_WEBHOOK_URL: http://api:3002
+      PO_EXTRACT_BASE_URL: ${PO_EXTRACT_BASE_URL:-https://api.openai.com/v1}
+      PO_EXTRACT_API_KEY: ${PO_EXTRACT_API_KEY:-}
+      PO_EXTRACT_MODEL: ${PO_EXTRACT_MODEL:-gpt-4o-mini}
+    ports:
+      - "3002:3002"
+
+volumes:
+  pgdata:

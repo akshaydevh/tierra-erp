@@ -1,0 +1,42 @@
+diff --git a/src/api/integrations/channel/whatsapp/whatsapp.baileys.service.ts b/src/api/integrations/channel/whatsapp/whatsapp.baileys.service.ts
+--- a/src/api/integrations/channel/whatsapp/whatsapp.baileys.service.ts
++++ b/src/api/integrations/channel/whatsapp/whatsapp.baileys.service.ts
+@@ -2163,13 +2163,37 @@
+           ...contextInfo,
+         };
+       }
++      const urlButton = interactive?.nativeFlowMessage?.buttons?.length === 1 &&
++        interactive.nativeFlowMessage.buttons[0].name === 'cta_url';
++      const additionalNodes = interactive
++        ? [
++            {
++              tag: 'biz',
++              attrs: {},
++              content: [{
++                tag: 'interactive',
++                attrs: { type: 'native_flow', v: '1' },
++                content: [{ tag: 'native_flow', attrs: { v: '9', name: 'mixed' } }],
++              }],
++            },
++            ...(!isJidGroup(sender) && (!urlButton || process.env.DODO_URL_BUTTON_BOT_NODE !== 'omit')
++              ? [{ tag: 'bot', attrs: { biz_bot: '1' } }]
++              : []),
++          ]
++        : undefined;
++      if (urlButton && process.env.DODO_URL_BUTTON_TEMPLATE_PARAMS !== 'legacy') {
++        delete interactive.nativeFlowMessage.messageParamsJson;
++      }
+       const m = generateWAMessageFromContent(sender, message, {
+         timestamp: new Date(),
+         userJid: this.instance.wuid,
+         messageId,
+         quoted,
+       });
+-      const id = await this.client.relayMessage(sender, message, { messageId });
++      const id = await this.client.relayMessage(sender, m.message!, {
++        messageId: m.key.id!,
++        ...(additionalNodes ? { additionalNodes } : {}),
++      });
+       m.key = { id: id, remoteJid: sender, participant: isPnUser(sender) ? sender : undefined, fromMe: true };
+       for (const [key, value] of Object.entries(m)) {
+         if (!value || (isArray(value) && value.length) === 0) {

@@ -1,0 +1,84 @@
+diff --git a/src/api/integrations/channel/whatsapp/whatsapp.baileys.service.ts b/src/api/integrations/channel/whatsapp/whatsapp.baileys.service.ts
+--- a/src/api/integrations/channel/whatsapp/whatsapp.baileys.service.ts
++++ b/src/api/integrations/channel/whatsapp/whatsapp.baileys.service.ts
+@@ -2156,6 +2156,13 @@
+     if (messageId) option.messageId = messageId;
+ 
+     if (message['viewOnceMessage']) {
++      const interactive = message.viewOnceMessage?.message?.interactiveMessage;
++      if (contextInfo && interactive) {
++        interactive.contextInfo = {
++          ...(interactive.contextInfo ?? {}),
++          ...contextInfo,
++        };
++      }
+       const m = generateWAMessageFromContent(sender, message, {
+         timestamp: new Date(),
+         userJid: this.instance.wuid,
+@@ -3357,6 +3364,7 @@
+         quoted: data?.quoted,
+         mentionsEveryOne: data?.mentionsEveryOne,
+         mentioned: data?.mentioned,
++        groupMentions: data?.groupMentions,
+       });
+     }
+ 
+@@ -3376,13 +3384,10 @@
+           interactiveMessage: {
+             body: {
+               text: (() => {
+-                let t = '*' + data.title + '*';
+-                if (data?.description) {
+-                  t += '\n\n';
+-                  t += data.description;
+-                  t += '\n';
+-                }
+-                return t;
++                const title = data.title?.trim() ?? '';
++                const description = data.description?.trim() ?? '';
++                if (title && description) return `*${title}*\n\n${description}`;
++                return title ? `*${title}*` : description;
+               })(),
+             },
+             footer: { text: data?.footer },
+@@ -3409,6 +3414,7 @@
+       quoted: data?.quoted,
+       mentionsEveryOne: data?.mentionsEveryOne,
+       mentioned: data?.mentioned,
++      groupMentions: data?.groupMentions,
+     });
+   }
+ 
+diff --git a/src/validate/message.schema.ts b/src/validate/message.schema.ts
+--- a/src/validate/message.schema.ts
++++ b/src/validate/message.schema.ts
+@@ -435,15 +435,29 @@
+     quoted: { ...quotedOptionsSchema },
+     everyOne: { type: 'boolean', enum: [true, false] },
+     mentioned: {
+       type: 'array',
+       minItems: 1,
+       uniqueItems: true,
+       items: {
+         type: 'string',
+         pattern: '^\\d+',
+         description: '"mentioned" must be an array of numeric strings',
+       },
+     },
++    groupMentions: {
++      type: 'array',
++      minItems: 1,
++      uniqueItems: true,
++      items: {
++        type: 'object',
++        additionalProperties: false,
++        properties: {
++          groupJid: { type: 'string', pattern: '^\\d+(?:-\\d+)?@g\\.us$' },
++          groupSubject: { type: 'string', minLength: 1 },
++        },
++        required: ['groupJid', 'groupSubject'],
++      },
++    },
+   },
+   required: ['number'],
+ };

@@ -1,0 +1,120 @@
+diff --git a/src/api/dto/sendMessage.dto.ts b/src/api/dto/sendMessage.dto.ts
+index ba9ecf5..79432c4 100644
+--- a/src/api/dto/sendMessage.dto.ts
++++ b/src/api/dto/sendMessage.dto.ts
+@@ -5,6 +5,11 @@ export class Quoted {
+   message: proto.IMessage;
+ }
+ 
++export class GroupMention {
++  groupJid: string;
++  groupSubject: string;
++}
++
+ export class Options {
+   delay?: number;
+   presence?: WAPresence;
+@@ -13,6 +18,7 @@ export class Options {
+   encoding?: boolean;
+   mentionsEveryOne?: boolean;
+   mentioned?: string[];
++  groupMentions?: GroupMention[];
+   webhookUrl?: string;
+ }
+ 
+@@ -43,6 +49,7 @@ export class Metadata {
+   linkPreview?: boolean;
+   mentionsEveryOne?: boolean;
+   mentioned?: string[];
++  groupMentions?: GroupMention[];
+   encoding?: boolean;
+   notConvertSticker?: boolean;
+ }
+diff --git a/src/api/integrations/channel/whatsapp/whatsapp.baileys.service.ts b/src/api/integrations/channel/whatsapp/whatsapp.baileys.service.ts
+index 60e857f..21d9356 100644
+--- a/src/api/integrations/channel/whatsapp/whatsapp.baileys.service.ts
++++ b/src/api/integrations/channel/whatsapp/whatsapp.baileys.service.ts
+@@ -2354,7 +2354,11 @@ export class BaileysStartupService extends ChannelStartupService {
+ 
+       let messageSent: WAMessage;
+ 
+-      let mentions: string[];
++      let mentions = options?.mentioned?.map((mention) => createJid(mention)).filter((jid) => !isJidGroup(jid));
++      const groupMentions = options?.groupMentions?.map((mention) => ({
++        groupJid: createJid(mention.groupJid),
++        groupSubject: mention.groupSubject.trim(),
++      }));
+       let contextInfo: any;
+ 
+       if (isJidGroup(sender)) {
+@@ -2374,16 +2378,13 @@ export class BaileysStartupService extends ChannelStartupService {
+ 
+         if (options?.mentionsEveryOne) {
+           mentions = group.participants.map((participant) => participant.id);
+-        } else if (options?.mentioned?.length) {
+-          mentions = options.mentioned.map((mention) => {
+-            const jid = createJid(mention);
+-            if (isJidGroup(jid)) {
+-              return null;
+-            }
+-            return jid;
+-          });
+         }
+ 
++        contextInfo = {
++          mentionedJid: mentions ?? [],
++          groupMentions: groupMentions ?? [],
++        };
++
+         messageSent = await this.sendMessage(
+           sender,
+           message,
+@@ -2392,12 +2393,13 @@ export class BaileysStartupService extends ChannelStartupService {
+           quoted,
+           null,
+           group?.ephemeralDuration,
++          contextInfo,
+           // group?.participants,
+         );
+       } else {
+         contextInfo = {
+-          mentionedJid: [],
+-          groupMentions: [],
++          mentionedJid: mentions ?? [],
++          groupMentions: groupMentions ?? [],
+           //expiration: 7776000,
+           ephemeralSettingTimestamp: {
+             low: Math.floor(Date.now() / 1000) - 172800,
+@@ -2643,6 +2645,7 @@ export class BaileysStartupService extends ChannelStartupService {
+         linkPreview: data?.linkPreview,
+         mentionsEveryOne: data?.mentionsEveryOne,
+         mentioned: data?.mentioned,
++        groupMentions: data?.groupMentions,
+       },
+       isIntegration,
+     );
+diff --git a/src/validate/message.schema.ts b/src/validate/message.schema.ts
+index d514c61..0d6045d 100644
+--- a/src/validate/message.schema.ts
++++ b/src/validate/message.schema.ts
+@@ -88,6 +88,20 @@ export const textMessageSchema: JSONSchema7 = {
+         description: '"mentioned" must be an array of numeric strings',
+       },
+     },
++    groupMentions: {
++      type: 'array',
++      minItems: 1,
++      uniqueItems: true,
++      items: {
++        type: 'object',
++        additionalProperties: false,
++        properties: {
++          groupJid: { type: 'string', pattern: '^\\d+(?:-\\d+)?@g\\.us$' },
++          groupSubject: { type: 'string', minLength: 1 },
++        },
++        required: ['groupJid', 'groupSubject'],
++      },
++    },
+   },
+   required: ['number', 'text'],
+ };
