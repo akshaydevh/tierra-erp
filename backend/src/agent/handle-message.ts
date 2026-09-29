@@ -29,14 +29,21 @@ const INTENT_CONFIDENCE_FLOOR = 0.5
 const UNDECIDED = 'Tierra Bot cannot decide yet.'
 const NEED_PDF = 'Send the purchase-order PDF and Tierra Bot will read it.'
 const HERE = 'Tierra Bot is here.'
+const TIERRA_HEADER = '> 🧞‍♂️ Tierra Bot:'
 
-function asBot(text: string): string {
-  return /tierra bot/i.test(text) ? text : `Tierra Bot: ${text}`
+export function ensureTierraPrefix(text: string): string {
+  const trimmed = text.trim()
+  if (trimmed.startsWith(TIERRA_HEADER)) return trimmed
+  const body = trimmed
+    .replace(/^> 🧞‍♂️ Tierra Bot:\s*/u, '')
+    .replace(/^🧞‍♂️ Tierra Bot:\s*/u, '')
+    .replace(/^Tierra Bot:\s*/i, '')
+  return `${TIERRA_HEADER}\n\n${body}`
 }
 
 async function sendBotText(deps: AgentDeps, message: IncomingMessage, text: string): Promise<void> {
   const remoteJid = replyChatJid(message)
-  const body = asBot(text)
+  const body = ensureTierraPrefix(text)
   const sent = await deps.evolution.sendText(deliveryAddress(remoteJid), body)
   if (!sent.messageId) return
   await deps.store.claimMessage({

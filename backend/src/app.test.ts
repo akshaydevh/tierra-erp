@@ -241,7 +241,7 @@ describe('whatsapp purchase orders', () => {
       { remoteJid: '919812345678@s.whatsapp.net', messageId: 'm-create', fromMe: false, emoji: '👀' },
     ])
     expect(ctx.evolution.sent).toHaveLength(1)
-    expect(ctx.evolution.sent[0]?.text).toContain('Tierra Bot')
+    expect(ctx.evolution.sent[0]?.text.startsWith('> 🧞‍♂️ Tierra Bot:\n\n')).toBe(true)
     expect(ctx.evolution.sent[0]?.text).toContain('Created order')
     expect(ctx.evolution.sent[0]?.text).toContain('PO-WA-1')
     expect(ctx.evolution.sent[0]?.number).toBe('919812345678')
@@ -297,7 +297,7 @@ describe('whatsapp purchase orders', () => {
     expect(text.status).toBe(200)
     expect(ctx.evolution.reactions.map((row) => row.emoji)).toEqual(['👀'])
     expect(ctx.evolution.sent).toHaveLength(1)
-    expect(ctx.evolution.sent[0]?.text).toBe('Tierra Bot here.')
+    expect(ctx.evolution.sent[0]?.text).toBe('> 🧞‍♂️ Tierra Bot:\n\nTierra Bot here.')
     expect(ctx.lastChat()?.snapshot).toBeNull()
     expect(ctx.store.messages.some((row) => row.evolutionMessageId === 'm-text')).toBe(true)
 
@@ -322,7 +322,9 @@ describe('whatsapp purchase orders', () => {
     ctx.evolution.failDownload = true
     const response = await post(pdfBody('m-download-fail'))
     expect(response.status).toBe(200)
-    expect(ctx.evolution.sent[0]?.text).toBe('Tierra Bot: The PDF could not be downloaded. No order was created.')
+    expect(ctx.evolution.sent[0]?.text).toBe(
+      '> 🧞‍♂️ Tierra Bot:\n\nThe PDF could not be downloaded. No order was created.',
+    )
     expect(ctx.extractCalls()).toBe(0)
     expect(ctx.store.messages.some((row) => row.evolutionMessageId === 'm-download-fail')).toBe(true)
     expect(ctx.store.documents).toHaveLength(0)
@@ -384,7 +386,7 @@ describe('tierra bot', () => {
     ctx.setJudged({ intent: 'dashboard_question', confidence: 0.9 })
     await post(textMessage('cust-1', '919800000000@s.whatsapp.net', 'what is your stock'))
     expect(ctx.lastChat()?.snapshot).toBeNull()
-    expect(ctx.evolution.sent[0]?.text).toBe('Tierra Bot here.')
+    expect(ctx.evolution.sent[0]?.text).toBe('> 🧞‍♂️ Tierra Bot:\n\nTierra Bot here.')
   })
 
   it('ignores the owner writing in someone else\'s chat', async () => {
@@ -584,7 +586,7 @@ describe('tierra bot', () => {
       },
     })
     expect(ctx.judgeCalls()).toBe(0)
-    expect(ctx.evolution.sent[0]?.text).toBe('Tierra Bot is here.')
+    expect(ctx.evolution.sent[0]?.text).toBe('> 🧞‍♂️ Tierra Bot:\n\nTierra Bot is here.')
   })
 
   it('does not reply to a reaction on a personal chat', async () => {
