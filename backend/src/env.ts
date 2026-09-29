@@ -25,6 +25,7 @@ export type Env = {
   poExtractBaseUrl: string
   poExtractApiKey: string
   poExtractModel: string
+  typesafeApiKey: string
 }
 
 export function loadEnv(): Env {
@@ -41,5 +42,6 @@ export function loadEnv(): Env {
     poExtractBaseUrl: process.env.PO_EXTRACT_BASE_URL ?? 'https://api.openai.com/v1',
     poExtractApiKey: process.env.PO_EXTRACT_API_KEY ?? '',
     poExtractModel: process.env.PO_EXTRACT_MODEL ?? 'gpt-4o-mini',
+    typesafeApiKey: process.env.TYPESAFE_API_KEY ?? '',
   }
 }

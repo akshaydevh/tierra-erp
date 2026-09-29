@@ -2,6 +2,8 @@ import { serve } from '@hono/node-server'
 import { drizzle } from 'drizzle-orm/postgres-js'
 import postgres from 'postgres'
 import { extractPurchaseOrder } from './agent/extract'
+import { createJudge } from './agent/judge'
+import { createCompleteChat } from './agent/reply'
 import { createApp } from './app'
 import { DrizzleStore } from './db/drizzle-store'
 import { migrate } from './db/migrate'
@@ -20,6 +22,8 @@ async function main() {
     store: new DrizzleStore(db),
     evolution: new HttpEvolution(env),
     extractPurchaseOrder: (pdf) => extractPurchaseOrder(pdf, env),
+    judgeIntent: createJudge(env),
+    completeChat: createCompleteChat(env),
     now: () => new Date(),
     webhookSecret: env.webhookSecret,
     sessionTtlMs: 1000 * 60 * 60 * 24 * 14,

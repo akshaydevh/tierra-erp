@@ -4,15 +4,19 @@ import { createApp, type AppDeps } from './app'
 import { DEV_PASSWORD } from './db/seed-data'
 import { MemoryStore } from './db/memory'
 import { ExtractError } from './agent/extract'
+import type { JudgeInput, JudgeResult } from './agent/judge'
+import type { ChatInput } from './agent/reply'
 import type { ExtractedPo } from './domain/intake'
 import type { EvolutionClient } from './whatsapp/evolution'
 
 class FakeEvolution implements EvolutionClient {
   sent: Array<{ number: string; text: string }> = []
+  reactions: Array<{ remoteJid: string; messageId: string; fromMe: boolean; emoji: string }> = []
   created = 0
   deleted = 0
   failCreate = false
   failDownload = false
+  private sentCount = 0
 
   async createInstance() {
     if (this.failCreate) throw new Error('down')
@@ -26,6 +30,12 @@ class FakeEvolution implements EvolutionClient {
 
   async sendText(number: string, text: string) {
     this.sent.push({ number, text })
+    this.sentCount += 1
+    return { messageId: `out-${this.sentCount}` }
+  }
+
+  async sendReaction(remoteJid: string, messageId: string, fromMe: boolean, emoji: string) {
+    this.reactions.push({ remoteJid, messageId, fromMe, emoji })
   }
 
   async downloadMedia() {
@@ -71,6 +81,12 @@ async function setup() {
   }
   let extractCalls = 0
   let extractError: Error | null = null
+  let judged: JudgeResult = { intent: 'conversation', confidence: 1 }
+  let judgeError: Error | null = null
+  let judgeCalls = 0
+  let lastJudge: JudgeInput | null = null
+  let chatCalls = 0
+  let lastChat: ChatInput | null = null
   const deps: AppDeps = {
     store,
     evolution,
@@ -78,6 +94,21 @@ async function setup() {
       extractCalls += 1
       if (extractError) throw extractError
       return extracted
+    },
+    judgeIntent: async (input) => {
+      judgeCalls += 1
+      lastJudge = input
+      if (judgeError) throw judgeError
+      return judged
+    },
+    completeChat: async (input) => {
+      chatCalls += 1
+      lastChat = input
+      if (input.snapshot) {
+        const row = input.snapshot.inventory.find((item) => item.sku === 'BAN-80G')
+        return `Banana chips 80g available ${row?.available ?? 'unknown'}.`
+      }
+      return 'Tierra Bot here.'
     },
     now: () => now,
     webhookSecret: secret,
@@ -94,6 +125,16 @@ async function setup() {
       extractError = error
     },
     extractCalls: () => extractCalls,
+    setJudged(next: JudgeResult) {
+      judged = next
+    },
+    failJudge(error: Error) {
+      judgeError = error
+    },
+    judgeCalls: () => judgeCalls,
+    lastJudge: () => lastJudge,
+    chatCalls: () => chatCalls,
+    lastChat: () => lastChat,
   }
 }
 
@@ -187,7 +228,11 @@ describe('whatsapp purchase orders', () => {
     const first = await post(pdfBody('m-create'))
     expect(first.status).toBe(200)
     expect(ctx.extractCalls()).toBe(1)
+    expect(ctx.evolution.reactions).toEqual([
+      { remoteJid: '919812345678@s.whatsapp.net', messageId: 'm-create', fromMe: false, emoji: '👀' },
+    ])
     expect(ctx.evolution.sent).toHaveLength(1)
+    expect(ctx.evolution.sent[0]?.text).toContain('Tierra Bot')
     expect(ctx.evolution.sent[0]?.text).toContain('Created order')
     expect(ctx.evolution.sent[0]?.text).toContain('PO-WA-1')
     expect(ctx.evolution.sent[0]?.number).toBe('919812345678')
@@ -231,7 +276,7 @@ describe('whatsapp purchase orders', () => {
     expect(ctx.store.documents).toHaveLength(0)
   })
 
-  it('stores a personal text and ignores a group PDF', async () => {
+  it('replies to a personal text and ignores a group PDF', async () => {
     const text = await post({
       event: 'messages.upsert',
       instance: 'tierra',
@@ -241,13 +286,16 @@ describe('whatsapp purchase orders', () => {
       },
     })
     expect(text.status).toBe(200)
-    expect(ctx.store.messages).toHaveLength(1)
-    expect(ctx.evolution.sent).toHaveLength(0)
+    expect(ctx.evolution.reactions.map((row) => row.emoji)).toEqual(['👀'])
+    expect(ctx.evolution.sent).toHaveLength(1)
+    expect(ctx.evolution.sent[0]?.text).toBe('Tierra Bot here.')
+    expect(ctx.lastChat()?.snapshot).toBeNull()
+    expect(ctx.store.messages.some((row) => row.evolutionMessageId === 'm-text')).toBe(true)
 
     const group = await post(pdfBody('m-group', '120363000@g.us'))
     expect(group.status).toBe(200)
     expect(ctx.extractCalls()).toBe(0)
-    expect(ctx.store.messages).toHaveLength(1)
+    expect(ctx.store.messages.some((row) => row.evolutionMessageId === 'm-group')).toBe(false)
   })
 
   it('stores the PDF and replies when extraction fails', async () => {
@@ -256,7 +304,7 @@ describe('whatsapp purchase orders', () => {
     expect(response.status).toBe(200)
     expect(ctx.evolution.sent).toHaveLength(1)
     expect(ctx.evolution.sent[0]?.text).toContain('failed (503)')
-    expect(ctx.store.messages).toHaveLength(1)
+    expect(ctx.store.messages.some((row) => row.evolutionMessageId === 'm-extract-fail')).toBe(true)
     expect(ctx.store.documents).toHaveLength(1)
     expect(ctx.store.orders.some((order) => order.poNumber === 'PO-WA-1')).toBe(false)
   })
@@ -265,9 +313,185 @@ describe('whatsapp purchase orders', () => {
     ctx.evolution.failDownload = true
     const response = await post(pdfBody('m-download-fail'))
     expect(response.status).toBe(200)
-    expect(ctx.evolution.sent[0]?.text).toBe('The PDF could not be downloaded. No order was created.')
+    expect(ctx.evolution.sent[0]?.text).toBe('Tierra Bot: The PDF could not be downloaded. No order was created.')
     expect(ctx.extractCalls()).toBe(0)
-    expect(ctx.store.messages).toHaveLength(1)
+    expect(ctx.store.messages.some((row) => row.evolutionMessageId === 'm-download-fail')).toBe(true)
     expect(ctx.store.documents).toHaveLength(0)
+  })
+})
+
+const SELF = '919900000000@s.whatsapp.net'
+const GROUP = '120363000@g.us'
+
+function textMessage(id: string, remoteJid: string, text: string, fromMe = false) {
+  return {
+    event: 'messages.upsert',
+    instance: 'tierra',
+    data: {
+      key: { id, remoteJid, fromMe },
+      message: { conversation: text },
+    },
+  }
+}
+
+describe('tierra bot', () => {
+  let ctx: Awaited<ReturnType<typeof setup>>
+
+  beforeEach(async () => {
+    ctx = await setup()
+    await ctx.store.saveWhatsapp({ status: 'connected', phoneNumber: '919900000000', qrBase64: null })
+  })
+
+  async function post(body: unknown) {
+    return ctx.app.request('/webhooks/evolution', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-webhook-secret': secret },
+      body: JSON.stringify(body),
+    })
+  }
+
+  it('answers a self-chat stock question from the dashboard and ignores its own echo', async () => {
+    ctx.setJudged({ intent: 'dashboard_question', confidence: 0.9 })
+    const first = await post(textMessage('user-1', SELF, 'how much stock is left', true))
+    expect(first.status).toBe(200)
+    expect(ctx.evolution.reactions).toEqual([
+      { remoteJid: SELF, messageId: 'user-1', fromMe: true, emoji: '👀' },
+    ])
+    expect(ctx.evolution.sent).toHaveLength(1)
+    expect(ctx.evolution.sent[0]?.number).toBe('919900000000')
+    expect(ctx.evolution.sent[0]?.text).toContain('available -60')
+    expect(ctx.lastJudge()?.chatKind).toBe('self')
+    expect(ctx.lastChat()?.snapshot?.inventory.some((row) => row.sku === 'BAN-80G')).toBe(true)
+    expect(ctx.lastChat()?.snapshot?.emptyModules).toContain('My Day')
+
+    const echo = await post(textMessage('out-1', SELF, 'Banana chips 80g available -60.', true))
+    expect(echo.status).toBe(200)
+    expect(ctx.judgeCalls()).toBe(1)
+    expect(ctx.evolution.sent).toHaveLength(1)
+    expect(ctx.evolution.reactions).toHaveLength(1)
+  })
+
+  it('does not include dashboard records when a customer chat asks about stock', async () => {
+    ctx.setJudged({ intent: 'dashboard_question', confidence: 0.9 })
+    await post(textMessage('cust-1', '919800000000@s.whatsapp.net', 'what is your stock'))
+    expect(ctx.lastChat()?.snapshot).toBeNull()
+    expect(ctx.evolution.sent[0]?.text).toBe('Tierra Bot here.')
+  })
+
+  it('ignores the owner writing in someone else\'s chat', async () => {
+    const response = await post(textMessage('own-1', '919800000000@s.whatsapp.net', 'on my way', true))
+    expect(response.status).toBe(200)
+    expect(ctx.evolution.sent).toHaveLength(0)
+    expect(ctx.evolution.reactions).toHaveLength(0)
+    expect(ctx.judgeCalls()).toBe(0)
+  })
+
+  it('answers a group message that names Tierra Bot and keeps the quoted text', async () => {
+    ctx.setJudged({ intent: 'dashboard_question', confidence: 0.8 })
+    const response = await post({
+      event: 'messages.upsert',
+      instance: 'tierra',
+      data: {
+        key: { id: 'g-name', remoteJid: GROUP, fromMe: false },
+        message: {
+          extendedTextMessage: {
+            text: 'Tierra Bot, how many orders are open?',
+            contextInfo: { quotedMessage: { conversation: 'the 80g line is short' } },
+          },
+        },
+      },
+    })
+    expect(response.status).toBe(200)
+    expect(ctx.lastJudge()).toMatchObject({
+      chatKind: 'group',
+      text: 'Tierra Bot, how many orders are open?',
+      quotedText: 'the 80g line is short',
+    })
+    expect(ctx.lastChat()?.quotedText).toBe('the 80g line is short')
+    expect(ctx.lastChat()?.snapshot?.commandCentre.openOrders).toBe(3)
+    expect(ctx.evolution.sent[0]?.number).toBe(GROUP)
+  })
+
+  it('answers a group message that mentions the connected number', async () => {
+    const response = await post({
+      event: 'messages.upsert',
+      instance: 'tierra',
+      data: {
+        key: { id: 'g-number', remoteJid: GROUP, fromMe: false },
+        message: {
+          extendedTextMessage: {
+            text: 'can you check this',
+            contextInfo: { mentionedJid: ['919900000000@s.whatsapp.net'] },
+          },
+        },
+      },
+    })
+    expect(response.status).toBe(200)
+    expect(ctx.evolution.sent).toHaveLength(1)
+    expect(ctx.lastJudge()?.chatKind).toBe('group')
+    expect(ctx.judgeCalls()).toBe(1)
+  })
+
+  it('answers a group @mention written in the text', async () => {
+    await post(textMessage('g-at', GROUP, '@919900000000 what is left'))
+    expect(ctx.evolution.sent).toHaveLength(1)
+    expect(ctx.lastJudge()?.chatKind).toBe('group')
+  })
+
+  it('ignores a group message that does not mention Tierra Bot', async () => {
+    await post(textMessage('g-plain', GROUP, 'how much stock is left'))
+    expect(ctx.evolution.sent).toHaveLength(0)
+    expect(ctx.judgeCalls()).toBe(0)
+    expect(ctx.store.messages).toHaveLength(0)
+  })
+
+  it('reads a purchase order when the group message mentions Tierra Bot', async () => {
+    const response = await post({
+      event: 'MESSAGES_UPSERT',
+      instance: 'tierra',
+      data: {
+        key: { id: 'g-pdf', remoteJid: GROUP, fromMe: false },
+        message: {
+          documentWithCaptionMessage: {
+            message: {
+              documentMessage: {
+                mimetype: 'application/pdf',
+                fileName: 'po.pdf',
+                caption: 'tierra bot please read this',
+              },
+            },
+          },
+        },
+      },
+    })
+    expect(response.status).toBe(200)
+    expect(ctx.extractCalls()).toBe(1)
+    expect(ctx.judgeCalls()).toBe(0)
+    expect(ctx.evolution.sent[0]?.text).toContain('Created order')
+    expect(ctx.evolution.sent[0]?.number).toBe(GROUP)
+    expect(ctx.evolution.reactions[0]?.emoji).toBe('👀')
+  })
+
+  it('asks for a PDF instead of creating an order from text', async () => {
+    ctx.setJudged({ intent: 'needs_pdf', confidence: 0.95 })
+    await post(textMessage('need-pdf', SELF, 'create an order for Beyond Snack', true))
+    expect(ctx.extractCalls()).toBe(0)
+    expect(ctx.chatCalls()).toBe(0)
+    expect(ctx.evolution.sent[0]?.text).toContain('purchase-order PDF')
+    expect(ctx.store.orders.some((order) => order.source === 'whatsapp')).toBe(false)
+  })
+
+  it('asks for clarification when Jev is unsure', async () => {
+    ctx.setJudged({ intent: 'dashboard_question', confidence: 0.4 })
+    await post(textMessage('unsure', SELF, 'maybe look at that', true))
+    expect(ctx.chatCalls()).toBe(0)
+    expect(ctx.evolution.sent[0]?.text).toContain('not sure')
+  })
+
+  it('says it cannot decide when Jev is not configured', async () => {
+    ctx.setJudged({ intent: 'unconfigured', confidence: 1 })
+    await post(textMessage('no-jev', SELF, 'hello', true))
+    expect(ctx.chatCalls()).toBe(0)
+    expect(ctx.evolution.sent[0]?.text).toContain('cannot decide')
   })
 })

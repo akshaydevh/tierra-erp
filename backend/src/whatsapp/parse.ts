@@ -10,10 +10,14 @@ export type IncomingMessage = {
   remoteJid: string
   fromMe: boolean
   text: string | null
+  quotedText: string | null
+  mentionedJids: string[]
   pdf: PdfAttachment | null
   raw: unknown
   embeddedBase64: string | null
 }
+
+export type ChatKind = 'self' | 'personal' | 'group'
 
 export type WebhookEvent =
   | { type: 'qr'; qr: string | null }
@@ -58,12 +62,66 @@ function readPdf(container: Record<string, unknown> | null): PdfAttachment | nul
   return { fileName, mimeType: mime || 'application/pdf' }
 }
 
+function contextInfos(message: Record<string, unknown>): Record<string, unknown>[] {
+  const found: Record<string, unknown>[] = []
+  const push = (value: unknown) => {
+    const info = record(value)
+    if (info) found.push(info)
+  }
+  push(message.contextInfo)
+  push(record(message.extendedTextMessage)?.contextInfo)
+  push(findDocument(message)?.contextInfo)
+  push(record(message.imageMessage)?.contextInfo)
+  push(record(message.videoMessage)?.contextInfo)
+  return found
+}
+
+function stringList(value: unknown): string[] {
+  if (typeof value === 'string' && value.length > 0) return [value]
+  if (!Array.isArray(value)) return []
+  return value.filter((item): item is string => typeof item === 'string' && item.length > 0)
+}
+
+function quotedBody(quoted: Record<string, unknown>): string | null {
+  return (
+    stringOf(quoted.conversation) ??
+    stringOf(record(quoted.extendedTextMessage)?.text) ??
+    stringOf(record(quoted.imageMessage)?.caption) ??
+    stringOf(findDocument(quoted)?.caption) ??
+    null
+  )
+}
+
+function readQuotedText(container: Record<string, unknown>): string | null {
+  const message = record(container.message)
+  if (!message) return null
+  for (const info of contextInfos(message)) {
+    const quoted = record(info.quotedMessage)
+    const text = quoted ? quotedBody(quoted) : null
+    if (text) return text
+  }
+  return null
+}
+
+function readMentions(container: Record<string, unknown>): string[] {
+  const message = record(container.message)
+  if (!message) return []
+  const mentions = new Set<string>()
+  for (const info of contextInfos(message)) {
+    for (const jid of stringList(info.mentionedJid)) mentions.add(jid)
+  }
+  return [...mentions]
+}
+
 function readText(container: Record<string, unknown>): string | null {
   const message = record(container.message)
   if (!message) return null
+  const doc = findDocument(message)
   return (
     stringOf(message.conversation) ??
     stringOf(record(message.extendedTextMessage)?.text) ??
+    stringOf(doc?.caption) ??
+    stringOf(record(message.imageMessage)?.caption) ??
     null
   )
 }
@@ -120,6 +178,8 @@ export function parseWebhook(body: unknown): WebhookEvent {
       remoteJid,
       fromMe: key?.fromMe === true,
       text: readText(message),
+      quotedText: readQuotedText(message),
+      mentionedJids: readMentions(message),
       pdf: readPdf(message),
       raw: message,
       embeddedBase64: embeddedBase64(message),
@@ -129,4 +189,44 @@ export function parseWebhook(body: unknown): WebhookEvent {
 
 export function replyNumber(jid: string): string {
   return chatNumber(jid)
+}
+
+export function phoneDigits(value: string | null | undefined): string {
+  return (value ?? '').replace(/@.*/, '').replace(/\D/g, '')
+}
+
+export function isGroupJid(jid: string): boolean {
+  return jid.endsWith('@g.us')
+}
+
+const BOT_NAME = /tierra\s+bot/i
+
+export function mentionsTierraBot(message: IncomingMessage, phoneNumber: string | null): boolean {
+  const text = message.text ?? ''
+  if (BOT_NAME.test(text)) return true
+  const phone = phoneDigits(phoneNumber)
+  if (phone.length < 8) return false
+  if (message.mentionedJids.some((jid) => phoneDigits(jid) === phone)) return true
+  return new RegExp(`@\\+?${phone}(?!\\d)`).test(text)
+}
+
+export function audienceFor(
+  message: IncomingMessage,
+  phoneNumber: string | null,
+): ChatKind | 'ignore' {
+  if (isGroupJid(message.remoteJid)) {
+    return mentionsTierraBot(message, phoneNumber) ? 'group' : 'ignore'
+  }
+  if (!isPersonalJid(message.remoteJid)) return 'ignore'
+  const own = phoneDigits(phoneNumber)
+  const chat = phoneDigits(message.remoteJid)
+  const isSelf = own.length >= 8 && chat === own
+  if (isSelf) return message.fromMe ? 'self' : 'ignore'
+  if (message.fromMe) return 'ignore'
+  return 'personal'
+}
+
+export function deliveryAddress(remoteJid: string): string {
+  if (isGroupJid(remoteJid)) return remoteJid
+  return replyNumber(remoteJid)
 }

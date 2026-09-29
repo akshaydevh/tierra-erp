@@ -1,6 +1,6 @@
 import { safeEqual } from '../auth/cookie'
-import { processPersonalPdf, type AgentDeps } from '../agent/handle-message'
-import { isPersonalJid, parseWebhook } from './parse'
+import { handleIncoming, type AgentDeps } from '../agent/handle-message'
+import { audienceFor, parseWebhook } from './parse'
 import { normalizeQr } from './qr'
 
 export async function acceptWebhook(
@@ -43,21 +43,20 @@ export async function acceptWebhook(
   if (event.type !== 'message') return { status: 200, body: { ok: true } }
 
   const message = event.message
-  if (message.fromMe || !isPersonalJid(message.remoteJid)) {
-    return { status: 200, body: { ignored: true } }
-  }
+  const connection = await deps.store.getWhatsapp()
+  const audience = audienceFor(message, connection.phoneNumber)
+  if (audience === 'ignore') return { status: 200, body: { ignored: true } }
   const claimed = await deps.store.claimMessage({
     evolutionMessageId: message.id,
     remoteJid: message.remoteJid,
-    fromMe: false,
+    fromMe: message.fromMe,
     hasPdf: Boolean(message.pdf),
     body: message.text,
   })
   if (!claimed) return { status: 200, body: { duplicate: true } }
-  if (!message.pdf) return { status: 200, body: { stored: true } }
 
   try {
-    await processPersonalPdf(deps, message)
+    await handleIncoming(deps, message, audience)
     return { status: 200, body: { ok: true } }
   } catch (error) {
     await deps.store.releaseMessage(message.id)

@@ -86,6 +86,78 @@ export async function orderDetail(store: Store, id: string): Promise<OrderDetail
   return { ...order, lines, hasDocument: await store.orderHasDocument(id) }
 }
 
+export const EMPTY_DASHBOARD_MODULES = [
+  'My Day',
+  'Approvals',
+  'Production',
+  'Procurement',
+  'Dispatch',
+  'Payments',
+  'Costing',
+  'Payroll and attendance',
+  'Reports',
+  'Masters',
+] as const
+
+export type DashboardOrderLine = {
+  sku: string
+  name: string
+  description: string
+  quantity: number
+  unit: string
+  unitPrice: string | null
+}
+
+export type DashboardSnapshot = {
+  commandCentre: CommandCentre
+  customers: Array<{ name: string; code: string }>
+  orders: Array<{
+    id: string
+    customerName: string
+    poNumber: string
+    poDate: string | null
+    status: string
+    source: string
+    lines: DashboardOrderLine[]
+  }>
+  inventory: InventoryRow[]
+  emptyModules: string[]
+}
+
+export async function dashboardSnapshot(store: Store): Promise<DashboardSnapshot> {
+  const [centre, customers, orders, lines, inventory] = await Promise.all([
+    commandCentre(store),
+    store.listCustomers(),
+    store.listOrders(),
+    store.listOrderLines(),
+    inventoryRows(store),
+  ])
+  return {
+    commandCentre: centre,
+    customers: customers.map((customer) => ({ name: customer.name, code: customer.code })),
+    orders: orders.map((order) => ({
+      id: order.id,
+      customerName: order.customerName,
+      poNumber: order.poNumber,
+      poDate: order.poDate,
+      status: order.status,
+      source: order.source,
+      lines: lines
+        .filter((line) => line.orderId === order.id)
+        .map((line) => ({
+          sku: line.sku,
+          name: line.itemName,
+          description: line.description,
+          quantity: line.quantity,
+          unit: line.unit,
+          unitPrice: line.unitPrice,
+        })),
+    })),
+    inventory,
+    emptyModules: [...EMPTY_DASHBOARD_MODULES],
+  }
+}
+
 export async function commandCentre(store: Store): Promise<CommandCentre> {
   const [orders, lines, balances, whatsapp] = await Promise.all([
     store.listOrders(),

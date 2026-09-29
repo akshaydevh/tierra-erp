@@ -9,17 +9,12 @@ import {
   readCookie,
   sessionCookie,
 } from './auth/cookie'
-import type { ExtractedPo } from './domain/intake'
+import type { AgentDeps } from './agent/handle-message'
 import { commandCentre, inventoryRows, orderDetail, orderList } from './domain/reads'
-import type { Store } from './db/store'
 import type { PublicUser } from './db/types'
 import { acceptWebhook } from './whatsapp/accept'
-import type { EvolutionClient } from './whatsapp/evolution'
 
-export type AppDeps = {
-  store: Store
-  evolution: EvolutionClient
-  extractPurchaseOrder: (pdf: Buffer) => Promise<ExtractedPo>
+export type AppDeps = AgentDeps & {
   now: () => Date
   webhookSecret: string
   sessionTtlMs: number

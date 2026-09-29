@@ -8,11 +8,33 @@ export type DownloadedMedia = {
   fileName: string
 }
 
+export type SentText = {
+  messageId: string | null
+}
+
 export interface EvolutionClient {
   createInstance(): Promise<{ qrBase64: string | null }>
   deleteInstance(): Promise<void>
-  sendText(number: string, text: string): Promise<void>
+  sendText(number: string, text: string): Promise<SentText>
+  sendReaction(remoteJid: string, messageId: string, fromMe: boolean, emoji: string): Promise<void>
   downloadMedia(message: unknown): Promise<DownloadedMedia>
+}
+
+function record(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+  return value as Record<string, unknown>
+}
+
+export function messageIdFrom(value: unknown): string | null {
+  const root = record(value)
+  if (!root) return null
+  const key = record(root.key)
+  const direct = typeof key?.id === 'string' && key.id.length > 0 ? key.id : null
+  if (direct) return direct
+  const data = record(root.data)
+  const nested = data ? record(data.key) : null
+  if (typeof nested?.id === 'string' && nested.id.length > 0) return nested.id
+  return typeof root.id === 'string' && root.id.length > 0 ? root.id : null
 }
 
 type EvolutionEnv = {
@@ -81,10 +103,21 @@ export class HttpEvolution implements EvolutionClient {
     return { qrBase64: qrFromPayload(created) }
   }
 
-  async sendText(number: string, text: string): Promise<void> {
-    await this.request(`/message/sendText/${INSTANCE_NAME}`, {
+  async sendText(number: string, text: string): Promise<SentText> {
+    const data = await this.request(`/message/sendText/${INSTANCE_NAME}`, {
       method: 'POST',
       body: JSON.stringify({ number, text }),
+    })
+    return { messageId: messageIdFrom(data) }
+  }
+
+  async sendReaction(remoteJid: string, messageId: string, fromMe: boolean, emoji: string): Promise<void> {
+    await this.request(`/message/sendReaction/${INSTANCE_NAME}`, {
+      method: 'POST',
+      body: JSON.stringify({
+        key: { remoteJid, fromMe, id: messageId },
+        reaction: emoji,
+      }),
     })
   }
 
