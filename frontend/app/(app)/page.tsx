@@ -52,7 +52,7 @@ export default async function CommandCentrePage() {
   )
 }
 
-export function OrderTable({
+function OrderTable({
   orders,
 }: {
   orders: Array<{
