@@ -6,9 +6,9 @@ vi.mock('pdf-parse', () => ({
 }))
 
 const env = {
-  poExtractBaseUrl: 'https://llm.example/v1',
-  poExtractApiKey: 'test-key',
-  poExtractModel: 'test-model',
+  openaiBaseUrl: 'https://llm.example/v1',
+  openaiApiKey: 'test-key',
+  openaiModel: 'test-model',
 }
 
 describe('extractPurchaseOrder', () => {

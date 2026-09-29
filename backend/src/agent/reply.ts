@@ -19,7 +19,7 @@ const SYSTEM = [
 
 export function createCompleteChat(env: ExtractEnv): (input: ChatInput) => Promise<string> {
   return async (input) => {
-    if (!env.poExtractApiKey) return CANNOT_REPLY
+    if (!env.openaiApiKey) return CANNOT_REPLY
     const user = [
       input.text,
       input.quotedText ? `Quoted message:\n${input.quotedText}` : null,
@@ -28,14 +28,14 @@ export function createCompleteChat(env: ExtractEnv): (input: ChatInput) => Promi
       .filter((part): part is string => Boolean(part))
       .join('\n\n')
     try {
-      const response = await fetch(`${env.poExtractBaseUrl.replace(/\/$/, '')}/chat/completions`, {
+      const response = await fetch(`${env.openaiBaseUrl.replace(/\/$/, '')}/chat/completions`, {
         method: 'POST',
         headers: {
-          authorization: `Bearer ${env.poExtractApiKey}`,
+          authorization: `Bearer ${env.openaiApiKey}`,
           'content-type': 'application/json',
         },
         body: JSON.stringify({
-          model: env.poExtractModel,
+          model: env.openaiModel,
           temperature: 0.2,
           messages: [
             { role: 'system', content: SYSTEM },

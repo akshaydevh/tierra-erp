@@ -54,9 +54,9 @@ services:
       EVOLUTION_API_KEY: ${EVOLUTION_API_KEY:-tierra-evolution-key}
       EVOLUTION_WEBHOOK_SECRET: ${EVOLUTION_WEBHOOK_SECRET:-tierra-webhook-secret}
       EVOLUTION_WEBHOOK_URL: http://api:3002
-      PO_EXTRACT_BASE_URL: ${PO_EXTRACT_BASE_URL:-https://api.openai.com/v1}
-      PO_EXTRACT_API_KEY: ${PO_EXTRACT_API_KEY:-}
-      PO_EXTRACT_MODEL: ${PO_EXTRACT_MODEL:-gpt-4o-mini}
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-https://api.openai.com/v1}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4o-mini}
     ports:
       - "3002:3002"
 

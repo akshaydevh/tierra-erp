@@ -27,9 +27,9 @@ const extractedSchema = z.object({
 })
 
 export type ExtractEnv = {
-  poExtractBaseUrl: string
-  poExtractApiKey: string
-  poExtractModel: string
+  openaiBaseUrl: string
+  openaiApiKey: string
+  openaiModel: string
 }
 
 function dayOrNull(value: string | null | undefined): string | null {
@@ -75,21 +75,21 @@ export async function extractPdfText(pdf: Buffer): Promise<string> {
 }
 
 export async function extractPurchaseOrder(pdf: Buffer, env: ExtractEnv): Promise<ExtractedPo> {
-  if (!env.poExtractApiKey) {
-    throw new ExtractError('Purchase order extraction is not configured. No order was created.')
+  if (!env.openaiApiKey) {
+    throw new ExtractError('OpenAI is not configured. No order was created.')
   }
   const text = (await extractPdfText(pdf)).trim()
   if (text.length < 20) {
     throw new ExtractError('The PDF had no readable text. No order was created.')
   }
-  const response = await fetch(`${env.poExtractBaseUrl.replace(/\/$/, '')}/chat/completions`, {
+  const response = await fetch(`${env.openaiBaseUrl.replace(/\/$/, '')}/chat/completions`, {
     method: 'POST',
     headers: {
-      authorization: `Bearer ${env.poExtractApiKey}`,
+      authorization: `Bearer ${env.openaiApiKey}`,
       'content-type': 'application/json',
     },
     body: JSON.stringify({
-      model: env.poExtractModel,
+      model: env.openaiModel,
       temperature: 0,
       messages: [
         {

@@ -22,9 +22,9 @@ export type Env = {
   evolutionApiKey: string
   webhookUrl: string
   webhookSecret: string
-  poExtractBaseUrl: string
-  poExtractApiKey: string
-  poExtractModel: string
+  openaiBaseUrl: string
+  openaiApiKey: string
+  openaiModel: string
   typesafeApiKey: string
 }
 
@@ -39,9 +39,9 @@ export function loadEnv(): Env {
     evolutionApiKey: process.env.EVOLUTION_API_KEY ?? 'tierra-evolution-key',
     webhookUrl: process.env.EVOLUTION_WEBHOOK_URL ?? 'http://localhost:3002',
     webhookSecret: process.env.EVOLUTION_WEBHOOK_SECRET ?? 'tierra-webhook-secret',
-    poExtractBaseUrl: process.env.PO_EXTRACT_BASE_URL ?? 'https://api.openai.com/v1',
-    poExtractApiKey: process.env.PO_EXTRACT_API_KEY ?? '',
-    poExtractModel: process.env.PO_EXTRACT_MODEL ?? 'gpt-4o-mini',
+    openaiBaseUrl: process.env.OPENAI_BASE_URL ?? 'https://api.openai.com/v1',
+    openaiApiKey: process.env.OPENAI_API_KEY ?? '',
+    openaiModel: process.env.OPENAI_MODEL ?? 'gpt-4o-mini',
     typesafeApiKey: process.env.TYPESAFE_API_KEY ?? '',
   }
 }
