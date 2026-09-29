@@ -13,7 +13,7 @@ import { ExtractError } from './extract'
 import type { JudgeInput, JudgeResult } from './judge'
 import type { ChatInput } from './reply'
 import type { EvolutionClient } from '../whatsapp/evolution'
-import { deliveryAddress, type ChatKind, type IncomingMessage } from '../whatsapp/parse'
+import { deliveryAddress, replyChatJid, type ChatKind, type IncomingMessage } from '../whatsapp/parse'
 
 export type AgentDeps = {
   store: Store
@@ -30,12 +30,14 @@ const UNSURE =
   'Tierra Bot is not sure what you want. Ask about orders or stock, or send a purchase-order PDF.'
 const UNDECIDED = 'Tierra Bot cannot decide yet.'
 const NEED_PDF = 'Send the purchase-order PDF and Tierra Bot will read it.'
+const HERE = 'Tierra Bot is here.'
 
 function asBot(text: string): string {
   return /tierra bot/i.test(text) ? text : `Tierra Bot: ${text}`
 }
 
-async function sendBotText(deps: AgentDeps, remoteJid: string, text: string): Promise<void> {
+async function sendBotText(deps: AgentDeps, message: IncomingMessage, text: string): Promise<void> {
+  const remoteJid = replyChatJid(message)
   const body = asBot(text)
   const sent = await deps.evolution.sendText(deliveryAddress(remoteJid), body)
   if (!sent.messageId) return
@@ -86,7 +88,7 @@ export async function processPersonalPdf(deps: AgentDeps, message: IncomingMessa
         messageId: message.id,
       })
     }
-    await sendBotText(deps, message.remoteJid, error.message)
+    await sendBotText(deps, message, error.message)
     return
   }
 
@@ -99,15 +101,15 @@ export async function processPersonalPdf(deps: AgentDeps, message: IncomingMessa
   ])
   const decision = decideIntake(extracted, customers, items, availabilityMap(balances, lines, orders))
   if (decision.kind === 'unmatched_customer') {
-    await sendBotText(deps, message.remoteJid, customerFailureReply(decision.customerName))
+    await sendBotText(deps, message, customerFailureReply(decision.customerName))
     return
   }
   if (decision.kind === 'unmatched_lines') {
-    await sendBotText(deps, message.remoteJid, lineFailureReply(decision.descriptions))
+    await sendBotText(deps, message, lineFailureReply(decision.descriptions))
     return
   }
   if (decision.kind === 'short') {
-    await sendBotText(deps, message.remoteJid, shortReply(decision.poNumber, decision.shortages))
+    await sendBotText(deps, message, shortReply(decision.poNumber, decision.shortages))
     return
   }
 
@@ -124,10 +126,10 @@ export async function processPersonalPdf(deps: AgentDeps, message: IncomingMessa
         messageId: message.id,
       },
     })
-    await sendBotText(deps, message.remoteJid, createdReply(created.id, decision.poNumber))
+    await sendBotText(deps, message, createdReply(created.id, decision.poNumber))
   } catch (error) {
     if (!(error instanceof StockShortError)) throw error
-    await sendBotText(deps, message.remoteJid, shortReply(decision.poNumber, error.shortages))
+    await sendBotText(deps, message, shortReply(decision.poNumber, error.shortages))
   }
 }
 
@@ -147,27 +149,36 @@ export async function handleIncoming(
 
   const text = message.text?.trim() ?? ''
   const quotedText = message.quotedText?.trim() || null
-  if (!text && !quotedText) return
+  const mustReply = chatKind === 'personal' || chatKind === 'self'
+  if (!text && !quotedText) {
+    if (mustReply) await sendBotText(deps, message, HERE)
+    return
+  }
 
   let judged: JudgeResult
   try {
     judged = await deps.judgeIntent({ chatKind, text, quotedText })
   } catch {
-    await sendBotText(deps, message.remoteJid, UNDECIDED)
+    await sendBotText(deps, message, UNDECIDED)
     return
   }
 
   if (judged.intent === 'unconfigured') {
-    await sendBotText(deps, message.remoteJid, UNDECIDED)
+    await sendBotText(deps, message, UNDECIDED)
     return
   }
   if (judged.confidence < INTENT_CONFIDENCE_FLOOR) {
-    await sendBotText(deps, message.remoteJid, UNSURE)
+    await sendBotText(deps, message, UNSURE)
     return
   }
-  if (judged.intent === 'ignore') return
+  if (judged.intent === 'ignore') {
+    if (!mustReply) return
+    const reply = await deps.completeChat({ text, quotedText, snapshot: null })
+    await sendBotText(deps, message, reply)
+    return
+  }
   if (judged.intent === 'needs_pdf') {
-    await sendBotText(deps, message.remoteJid, NEED_PDF)
+    await sendBotText(deps, message, NEED_PDF)
     return
   }
 
@@ -175,5 +186,5 @@ export async function handleIncoming(
     judged.intent === 'dashboard_question' && (chatKind === 'self' || chatKind === 'group')
   const snapshot = includeSnapshot ? await dashboardSnapshot(deps.store) : null
   const reply = await deps.completeChat({ text, quotedText, snapshot })
-  await sendBotText(deps, message.remoteJid, reply)
+  await sendBotText(deps, message, reply)
 }

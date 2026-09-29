@@ -1,6 +1,6 @@
 import { safeEqual } from '../auth/cookie'
 import { handleIncoming, type AgentDeps } from '../agent/handle-message'
-import { audienceFor, parseWebhook } from './parse'
+import { audienceFor, isPersonalJid, parseWebhook } from './parse'
 import { normalizeQr } from './qr'
 
 export async function acceptWebhook(
@@ -28,10 +28,11 @@ export async function acceptWebhook(
   if (event.type === 'connection') {
     const current = await deps.store.getWhatsapp()
     if (event.state === 'open') {
+      const discovered = event.phone ?? (await deps.evolution.fetchOwnerPhone())
       await deps.store.saveWhatsapp({
         status: 'connected',
         qrBase64: null,
-        phoneNumber: event.phone ?? current.phoneNumber,
+        phoneNumber: discovered ?? current.phoneNumber,
       })
     } else if (event.state === 'connecting') {
       await deps.store.saveWhatsapp({ status: 'qr_pending' })
@@ -43,8 +44,19 @@ export async function acceptWebhook(
   if (event.type !== 'message') return { status: 200, body: { ok: true } }
 
   const message = event.message
-  const connection = await deps.store.getWhatsapp()
-  const audience = audienceFor(message, connection.phoneNumber)
+  let connection = await deps.store.getWhatsapp()
+  let audience = audienceFor(message, connection.phoneNumber)
+  if (
+    audience === 'ignore' &&
+    message.fromMe &&
+    (isPersonalJid(message.remoteJid) || (message.aliasJid ? isPersonalJid(message.aliasJid) : false))
+  ) {
+    const owner = await deps.evolution.fetchOwnerPhone()
+    if (owner && owner !== connection.phoneNumber) {
+      connection = await deps.store.saveWhatsapp({ phoneNumber: owner })
+      audience = audienceFor(message, connection.phoneNumber)
+    }
+  }
   if (audience === 'ignore') return { status: 200, body: { ignored: true } }
   const claimed = await deps.store.claimMessage({
     evolutionMessageId: message.id,

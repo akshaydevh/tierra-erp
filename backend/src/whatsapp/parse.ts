@@ -1,4 +1,4 @@
-import { chatNumber, phoneFromPayload, qrFromPayload } from './qr'
+import { chatNumber, phoneDigits, phoneFromPayload, qrFromPayload } from './qr'
 
 export type PdfAttachment = {
   fileName: string
@@ -12,6 +12,8 @@ export type IncomingMessage = {
   text: string | null
   quotedText: string | null
   mentionedJids: string[]
+  aliasJid: string | null
+  control: boolean
   pdf: PdfAttachment | null
   raw: unknown
   embeddedBase64: string | null
@@ -38,7 +40,13 @@ export function isPersonalJid(jid: string): boolean {
   if (!jid || jid === 'status@broadcast' || jid.endsWith('@g.us') || jid.endsWith('@broadcast')) {
     return false
   }
-  return jid.endsWith('@s.whatsapp.net') || jid.endsWith('@lid')
+  return jid.endsWith('@s.whatsapp.net') || jid.endsWith('@lid') || jid.endsWith('@c.us')
+}
+
+function isControlMessage(container: Record<string, unknown>): boolean {
+  const message = record(container.message)
+  if (!message) return false
+  return Boolean(message.reactionMessage || message.protocolMessage || message.pollUpdateMessage)
 }
 
 function findDocument(message: Record<string, unknown>): Record<string, unknown> | null {
@@ -180,6 +188,8 @@ export function parseWebhook(body: unknown): WebhookEvent {
       text: readText(message),
       quotedText: readQuotedText(message),
       mentionedJids: readMentions(message),
+      aliasJid: stringOf(key?.remoteJidAlt),
+      control: isControlMessage(message),
       pdf: readPdf(message),
       raw: message,
       embeddedBase64: embeddedBase64(message),
@@ -191,12 +201,25 @@ export function replyNumber(jid: string): string {
   return chatNumber(jid)
 }
 
-export function phoneDigits(value: string | null | undefined): string {
-  return (value ?? '').replace(/@.*/, '').replace(/\D/g, '')
-}
+export { phoneDigits }
 
 export function isGroupJid(jid: string): boolean {
   return jid.endsWith('@g.us')
+}
+
+function sameOwner(phoneNumber: string | null, jid: string): boolean {
+  const own = phoneDigits(phoneNumber)
+  const chat = phoneDigits(jid)
+  if (own.length < 8 || chat.length < 8) return false
+  if (own === chat) return true
+  const [longer, shorter] = own.length >= chat.length ? [own, chat] : [chat, own]
+  const extra = longer.length - shorter.length
+  return longer.startsWith(shorter) && extra > 0 && extra <= 2
+}
+
+function exactOwner(phoneNumber: string | null, jid: string): boolean {
+  const own = phoneDigits(phoneNumber)
+  return own.length >= 8 && phoneDigits(jid) === own
 }
 
 const BOT_NAME = /tierra\s+bot/i
@@ -214,19 +237,29 @@ export function audienceFor(
   message: IncomingMessage,
   phoneNumber: string | null,
 ): ChatKind | 'ignore' {
+  if (message.control) return 'ignore'
   if (isGroupJid(message.remoteJid)) {
     return mentionsTierraBot(message, phoneNumber) ? 'group' : 'ignore'
   }
-  if (!isPersonalJid(message.remoteJid)) return 'ignore'
-  const own = phoneDigits(phoneNumber)
-  const chat = phoneDigits(message.remoteJid)
-  const isSelf = own.length >= 8 && chat === own
-  if (isSelf) return message.fromMe ? 'self' : 'ignore'
+  const personal =
+    isPersonalJid(message.remoteJid) || (message.aliasJid ? isPersonalJid(message.aliasJid) : false)
+  if (!personal) return 'ignore'
+  const jids = [message.remoteJid, message.aliasJid]
+  const isExactSelf = jids.some((jid) => jid && isPersonalJid(jid) && exactOwner(phoneNumber, jid))
+  const isSelf =
+    isExactSelf ||
+    (message.fromMe && jids.some((jid) => jid && isPersonalJid(jid) && sameOwner(phoneNumber, jid)))
+  if (isSelf) return 'self'
   if (message.fromMe) return 'ignore'
   return 'personal'
 }
 
 export function deliveryAddress(remoteJid: string): string {
-  if (isGroupJid(remoteJid)) return remoteJid
+  if (isGroupJid(remoteJid) || remoteJid.endsWith('@lid')) return remoteJid
   return replyNumber(remoteJid)
+}
+
+export function replyChatJid(message: IncomingMessage): string {
+  const jids = [message.aliasJid, message.remoteJid].filter((jid): jid is string => Boolean(jid))
+  return jids.find((jid) => jid.endsWith('@s.whatsapp.net')) ?? message.remoteJid
 }

@@ -8,6 +8,7 @@ import type { JudgeInput, JudgeResult } from './agent/judge'
 import type { ChatInput } from './agent/reply'
 import type { ExtractedPo } from './domain/intake'
 import type { EvolutionClient } from './whatsapp/evolution'
+import { ownerPhoneFromInstances } from './whatsapp/qr'
 
 class FakeEvolution implements EvolutionClient {
   sent: Array<{ number: string; text: string }> = []
@@ -16,6 +17,7 @@ class FakeEvolution implements EvolutionClient {
   deleted = 0
   failCreate = false
   failDownload = false
+  ownerPhone: string | null = null
   private sentCount = 0
 
   async createInstance() {
@@ -36,6 +38,10 @@ class FakeEvolution implements EvolutionClient {
 
   async sendReaction(remoteJid: string, messageId: string, fromMe: boolean, emoji: string) {
     this.reactions.push({ remoteJid, messageId, fromMe, emoji })
+  }
+
+  async fetchOwnerPhone() {
+    return this.ownerPhone
   }
 
   async downloadMedia() {
@@ -486,6 +492,107 @@ describe('tierra bot', () => {
     await post(textMessage('unsure', SELF, 'maybe look at that', true))
     expect(ctx.chatCalls()).toBe(0)
     expect(ctx.evolution.sent[0]?.text).toContain('not sure')
+  })
+
+  it('answers Message Yourself when the saved number still has a device suffix', async () => {
+    await ctx.store.saveWhatsapp({ status: 'connected', phoneNumber: '91990000000012', qrBase64: null })
+    await post(textMessage('self-suffix', SELF, 'Hey', true))
+    expect(ctx.evolution.reactions[0]?.emoji).toBe('👀')
+    expect(ctx.evolution.sent).toHaveLength(1)
+    expect(ctx.lastJudge()?.chatKind).toBe('self')
+  })
+
+  it('answers Message Yourself when WhatsApp sends a lid and the phone as an alias', async () => {
+    const response = await post({
+      event: 'messages.upsert',
+      instance: 'tierra',
+      data: {
+        key: {
+          id: 'self-lid',
+          remoteJid: '123456789012345@lid',
+          remoteJidAlt: SELF,
+          fromMe: true,
+        },
+        message: { conversation: 'Hey' },
+      },
+    })
+    expect(response.status).toBe(200)
+    expect(ctx.lastJudge()?.chatKind).toBe('self')
+    expect(ctx.evolution.sent).toHaveLength(1)
+    expect(ctx.evolution.sent[0]?.number).toBe('919900000000')
+    expect(ctx.evolution.reactions[0]?.remoteJid).toBe('123456789012345@lid')
+  })
+
+  it('learns the connected number from Evolution and then answers Message Yourself', async () => {
+    await ctx.store.saveWhatsapp({ status: 'connected', phoneNumber: null, qrBase64: null })
+    ctx.evolution.ownerPhone = '919900000000'
+    await post(textMessage('self-learn', SELF, 'Hey', true))
+    expect((await ctx.store.getWhatsapp()).phoneNumber).toBe('919900000000')
+    expect(ctx.evolution.sent).toHaveLength(1)
+    expect(ctx.lastJudge()?.chatKind).toBe('self')
+  })
+
+  it('stores the owner number without the device suffix when the connection opens', async () => {
+    await ctx.store.saveWhatsapp({ status: 'qr_pending', phoneNumber: null, qrBase64: null })
+    const connected = await post({
+      event: 'connection.update',
+      instance: 'tierra',
+      data: { state: 'open', wuid: '919900000000:12@s.whatsapp.net' },
+    })
+    expect(connected.status).toBe(200)
+    expect((await ctx.store.getWhatsapp()).phoneNumber).toBe('919900000000')
+    await post(textMessage('after-connect', SELF, 'Hey', true))
+    expect(ctx.evolution.sent).toHaveLength(1)
+  })
+
+  it('reads the tierra instance owner from an Evolution instance list', () => {
+    expect(
+      ownerPhoneFromInstances([
+        { name: 'other', ownerJid: '911111111111@s.whatsapp.net' },
+        { name: 'tierra', ownerJid: '919900000000:12@s.whatsapp.net' },
+      ]),
+    ).toBe('919900000000')
+  })
+
+  it('replies to every received personal message, including when the intent is ignore', async () => {
+    ctx.setJudged({ intent: 'ignore', confidence: 0.95 })
+    await post(textMessage('in-hey', '919812345678@s.whatsapp.net', 'Hey'))
+    expect(ctx.lastJudge()?.chatKind).toBe('personal')
+    expect(ctx.chatCalls()).toBe(1)
+    expect(ctx.evolution.sent).toHaveLength(1)
+    expect(ctx.evolution.reactions[0]?.emoji).toBe('👀')
+  })
+
+  it('replies to a received personal message on an older WhatsApp jid', async () => {
+    await post(textMessage('in-cus', '919812345678@c.us', 'Hi'))
+    expect(ctx.evolution.sent).toHaveLength(1)
+    expect(ctx.lastJudge()?.chatKind).toBe('personal')
+  })
+
+  it('replies when a received personal message has no text', async () => {
+    await post({
+      event: 'messages.upsert',
+      instance: 'tierra',
+      data: {
+        key: { id: 'in-image', remoteJid: '919812345678@s.whatsapp.net', fromMe: false },
+        message: { imageMessage: { mimetype: 'image/jpeg' } },
+      },
+    })
+    expect(ctx.judgeCalls()).toBe(0)
+    expect(ctx.evolution.sent[0]?.text).toBe('Tierra Bot is here.')
+  })
+
+  it('does not reply to a reaction on a personal chat', async () => {
+    await post({
+      event: 'messages.upsert',
+      instance: 'tierra',
+      data: {
+        key: { id: 'in-react', remoteJid: '919812345678@s.whatsapp.net', fromMe: false },
+        message: { reactionMessage: { text: '👍', key: { id: 'older' } } },
+      },
+    })
+    expect(ctx.evolution.sent).toHaveLength(0)
+    expect(ctx.evolution.reactions).toHaveLength(0)
   })
 
   it('says it cannot decide when Jev is not configured', async () => {

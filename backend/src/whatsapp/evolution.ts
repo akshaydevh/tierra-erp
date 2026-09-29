@@ -1,4 +1,4 @@
-import { qrFromPayload } from './qr'
+import { ownerPhoneFromInstances, qrFromPayload } from './qr'
 
 export const INSTANCE_NAME = 'tierra'
 
@@ -18,6 +18,7 @@ export interface EvolutionClient {
   sendText(number: string, text: string): Promise<SentText>
   sendReaction(remoteJid: string, messageId: string, fromMe: boolean, emoji: string): Promise<void>
   downloadMedia(message: unknown): Promise<DownloadedMedia>
+  fetchOwnerPhone(): Promise<string | null>
 }
 
 function record(value: unknown): Record<string, unknown> | null {
@@ -119,6 +120,15 @@ export class HttpEvolution implements EvolutionClient {
         reaction: emoji,
       }),
     })
+  }
+
+  async fetchOwnerPhone(): Promise<string | null> {
+    try {
+      const data = await this.request('/instance/fetchInstances')
+      return ownerPhoneFromInstances(data)
+    } catch {
+      return null
+    }
   }
 
   async downloadMedia(message: unknown): Promise<DownloadedMedia> {
