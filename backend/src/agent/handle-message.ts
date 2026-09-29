@@ -26,8 +26,6 @@ export type AgentDeps = {
 const PDF_UNAVAILABLE = 'The PDF could not be downloaded. No order was created.'
 const READ_EMOJI = '👀'
 const INTENT_CONFIDENCE_FLOOR = 0.5
-const UNSURE =
-  'Tierra Bot is not sure what you want. Ask about orders or stock, or send a purchase-order PDF.'
 const UNDECIDED = 'Tierra Bot cannot decide yet.'
 const NEED_PDF = 'Send the purchase-order PDF and Tierra Bot will read it.'
 const HERE = 'Tierra Bot is here.'
@@ -167,13 +165,9 @@ export async function handleIncoming(
     await sendBotText(deps, message, UNDECIDED)
     return
   }
-  if (judged.confidence < INTENT_CONFIDENCE_FLOOR) {
-    await sendBotText(deps, message, UNSURE)
-    return
-  }
-  if (judged.intent === 'ignore') {
-    if (!mustReply) return
-    const reply = await deps.completeChat({ text, quotedText, snapshot: null })
+  if (judged.confidence < INTENT_CONFIDENCE_FLOOR || judged.intent === 'ignore') {
+    if (!mustReply && judged.intent === 'ignore' && judged.confidence >= INTENT_CONFIDENCE_FLOOR) return
+    const reply = await deps.completeChat({ text, quotedText, snapshot: null, unsure: true })
     await sendBotText(deps, message, reply)
     return
   }

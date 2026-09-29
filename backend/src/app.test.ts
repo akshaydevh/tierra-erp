@@ -110,6 +110,9 @@ async function setup() {
     completeChat: async (input) => {
       chatCalls += 1
       lastChat = input
+      if (input.unsure) {
+        return 'Hi. What would you like to know? I can give you a brief on what is going on in the factory.'
+      }
       if (input.snapshot) {
         const row = input.snapshot.inventory.find((item) => item.sku === 'BAN-80G')
         return `Banana chips 80g available ${row?.available ?? 'unknown'}.`
@@ -487,11 +490,13 @@ describe('tierra bot', () => {
     expect(ctx.store.orders.some((order) => order.source === 'whatsapp')).toBe(false)
   })
 
-  it('asks for clarification when Jev is unsure', async () => {
+  it('greets and offers a factory brief when Jev is unsure', async () => {
     ctx.setJudged({ intent: 'dashboard_question', confidence: 0.4 })
-    await post(textMessage('unsure', SELF, 'maybe look at that', true))
-    expect(ctx.chatCalls()).toBe(0)
-    expect(ctx.evolution.sent[0]?.text).toContain('not sure')
+    await post(textMessage('unsure', SELF, 'Hi', true))
+    expect(ctx.chatCalls()).toBe(1)
+    expect(ctx.lastChat()?.unsure).toBe(true)
+    expect(ctx.lastChat()?.snapshot).toBeNull()
+    expect(ctx.evolution.sent[0]?.text).toContain('brief on what is going on in the factory')
   })
 
   it('answers Message Yourself when the saved number still has a device suffix', async () => {
