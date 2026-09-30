@@ -4,5 +4,5 @@ import { SettingsPanel } from './settings-panel'
 
 export default async function SettingsPage() {
   const { user } = await api<{ user: Me }>('/api/auth/me')
-  return <SettingsPanel canConnect={user.role === 'admin'} />
+  return <SettingsPanel canManage={user.role === 'admin'} />
 }

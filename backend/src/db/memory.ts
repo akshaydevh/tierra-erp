@@ -4,6 +4,7 @@ import { availableQuantity } from '../domain/inventory'
 import { seedBalances, seedCustomers, seedItems, seedOrders, seedUsers } from './seed-data'
 import type { RecentMessage, Store } from './store'
 import type {
+  AccountLink,
   Balance,
   ClaimedMessage,
   Customer,
@@ -38,6 +39,7 @@ export class MemoryStore implements Store {
   lines: OrderLineRecord[]
   documents: DocumentRow[] = []
   messages: ClaimedMessage[] = []
+  relations: Array<{ userId: string; phoneNumber: string }> = []
   whatsapp: WhatsappConnection = {
     instanceName: 'tierra',
     status: 'disconnected',
@@ -98,6 +100,25 @@ export class MemoryStore implements Store {
 
   async deleteSession(tokenHash: string): Promise<void> {
     this.sessions = this.sessions.filter((row) => row.tokenHash !== tokenHash)
+  }
+
+  async listAccountLinks(): Promise<AccountLink[]> {
+    return this.users.map((user) => ({
+      id: user.id,
+      name: user.name,
+      email: user.email,
+      role: user.role,
+      phoneNumber: this.relations.find((row) => row.userId === user.id)?.phoneNumber ?? null,
+    }))
+  }
+
+  async saveRelation(input: { userId: string; phoneNumber: string }): Promise<void> {
+    this.relations = this.relations.filter((row) => row.userId !== input.userId)
+    this.relations.push({ userId: input.userId, phoneNumber: input.phoneNumber })
+  }
+
+  async deleteRelation(userId: string): Promise<void> {
+    this.relations = this.relations.filter((row) => row.userId !== userId)
   }
 
   async listCustomers(): Promise<Customer[]> {

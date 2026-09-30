@@ -13,6 +13,7 @@ import { ExtractError } from './extract'
 import type { JudgeInput, JudgeResult } from './judge'
 import type { ChatInput, ChatTurn } from './reply'
 import type { EvolutionClient } from '../whatsapp/evolution'
+import { resolvePeople, type Person } from '../whatsapp/people'
 import { deliveryAddress, replyChatJid, type ChatKind, type IncomingMessage } from '../whatsapp/parse'
 
 export type AgentDeps = {
@@ -76,7 +77,16 @@ async function pdfBytes(deps: AgentDeps, message: IncomingMessage): Promise<Buff
   return pdfBuffer(message, downloaded)
 }
 
-export async function processPersonalPdf(deps: AgentDeps, message: IncomingMessage): Promise<void> {
+function withSender(text: string, speaker: Person | null): string {
+  if (!speaker) return text
+  return `${text} From ${speaker.name}.`
+}
+
+export async function processPersonalPdf(
+  deps: AgentDeps,
+  message: IncomingMessage,
+  speaker: Person | null,
+): Promise<void> {
   if (!message.pdf) return
   let content: Buffer | undefined
   let extracted: ExtractedPo
@@ -93,7 +103,7 @@ export async function processPersonalPdf(deps: AgentDeps, message: IncomingMessa
         messageId: message.id,
       })
     }
-    await sendBotText(deps, message, error.message)
+    await sendBotText(deps, message, withSender(error.message, speaker))
     return
   }
 
@@ -106,15 +116,15 @@ export async function processPersonalPdf(deps: AgentDeps, message: IncomingMessa
   ])
   const decision = decideIntake(extracted, customers, items, availabilityMap(balances, lines, orders))
   if (decision.kind === 'unmatched_customer') {
-    await sendBotText(deps, message, customerFailureReply(decision.customerName))
+    await sendBotText(deps, message, withSender(customerFailureReply(decision.customerName), speaker))
     return
   }
   if (decision.kind === 'unmatched_lines') {
-    await sendBotText(deps, message, lineFailureReply(decision.descriptions))
+    await sendBotText(deps, message, withSender(lineFailureReply(decision.descriptions), speaker))
     return
   }
   if (decision.kind === 'short') {
-    await sendBotText(deps, message, shortReply(decision.poNumber, decision.shortages))
+    await sendBotText(deps, message, withSender(shortReply(decision.poNumber, decision.shortages), speaker))
     return
   }
 
@@ -131,10 +141,10 @@ export async function processPersonalPdf(deps: AgentDeps, message: IncomingMessa
         messageId: message.id,
       },
     })
-    await sendBotText(deps, message, createdReply(created.id, decision.poNumber))
+    await sendBotText(deps, message, withSender(createdReply(created.id, decision.poNumber), speaker))
   } catch (error) {
     if (!(error instanceof StockShortError)) throw error
-    await sendBotText(deps, message, shortReply(decision.poNumber, error.shortages))
+    await sendBotText(deps, message, withSender(shortReply(decision.poNumber, error.shortages), speaker))
   }
 }
 
@@ -147,8 +157,14 @@ export async function handleIncoming(
     .sendReaction(message.remoteJid, message.id, message.fromMe, READ_EMOJI)
     .catch(() => undefined)
 
+  const [accounts, connection] = await Promise.all([
+    deps.store.listAccountLinks(),
+    deps.store.getWhatsapp(),
+  ])
+  const people = resolvePeople(message, chatKind, accounts, connection.phoneNumber)
+
   if (message.pdf) {
-    await processPersonalPdf(deps, message)
+    await processPersonalPdf(deps, message, people.speaker)
     return
   }
 
@@ -162,7 +178,13 @@ export async function handleIncoming(
 
   let judged: JudgeResult
   try {
-    judged = await deps.judgeIntent({ chatKind, text, quotedText })
+    judged = await deps.judgeIntent({
+      chatKind,
+      text,
+      quotedText,
+      speaker: people.speaker,
+      mentioned: people.mentioned,
+    })
   } catch {
     await sendBotText(deps, message, UNDECIDED)
     return
@@ -200,6 +222,14 @@ export async function handleIncoming(
         : 'contact'
     return [{ speaker, text: turn }]
   })
-  const reply = await deps.completeChat({ text, quotedText, snapshot, history, unsure })
+  const reply = await deps.completeChat({
+    text,
+    quotedText,
+    snapshot,
+    history,
+    speaker: people.speaker,
+    mentioned: people.mentioned,
+    unsure,
+  })
   await sendBotText(deps, message, reply)
 }

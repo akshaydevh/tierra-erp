@@ -1,4 +1,5 @@
 import type { DashboardSnapshot } from '../domain/reads'
+import type { Person } from '../whatsapp/people'
 import type { ExtractEnv } from './extract'
 
 export type ChatTurn = {
@@ -11,6 +12,8 @@ export type ChatInput = {
   quotedText: string | null
   snapshot: DashboardSnapshot | null
   history: ChatTurn[]
+  speaker: Person | null
+  mentioned: Person[]
   unsure?: boolean
 }
 
@@ -26,6 +29,7 @@ const SYSTEM = [
   'When they ask what is going on, ask for a brief, or agree to a brief you already offered, summarize open orders, short stock, and the recent orders from the snapshot.',
   'When the message is only a greeting and they have not asked for a brief, greet them and offer one. Do not greet again instead of answering.',
   'When no snapshot is provided, do not recite orders, stock, customers, or other internal figures.',
+  'A named sender or mentioned person is a Tierra account linked to that phone number. Address them by name and use their role. An unknown number is not a Tierra account, so do not invent a name for them.',
 ].join(' ')
 
 export function createCompleteChat(env: ExtractEnv): (input: ChatInput) => Promise<string> {
@@ -37,6 +41,14 @@ export function createCompleteChat(env: ExtractEnv): (input: ChatInput) => Promi
         : null
     const user = [
       history,
+      input.speaker
+        ? `Sender: ${input.speaker.name} (${input.speaker.role}, ${input.speaker.phoneNumber})`
+        : 'Sender: unknown',
+      input.mentioned.length > 0
+        ? `Mentioned:\n${input.mentioned
+            .map((person) => `${person.name} (${person.role}, ${person.phoneNumber})`)
+            .join('\n')}`
+        : null,
       `Latest message:\n${input.text}`,
       input.quotedText ? `Quoted message:\n${input.quotedText}` : null,
       input.unsure

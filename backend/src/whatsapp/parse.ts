@@ -12,6 +12,8 @@ export type IncomingMessage = {
   text: string | null
   quotedText: string | null
   mentionedJids: string[]
+  participantJid: string | null
+  participantAltJid: string | null
   aliasJid: string | null
   control: boolean
   pdf: PdfAttachment | null
@@ -188,6 +190,8 @@ export function parseWebhook(body: unknown): WebhookEvent {
       text: readText(message),
       quotedText: readQuotedText(message),
       mentionedJids: readMentions(message),
+      participantJid: stringOf(key?.participant) ?? stringOf(message.participant),
+      participantAltJid: stringOf(key?.participantAlt) ?? stringOf(message.participantAlt),
       aliasJid: stringOf(key?.remoteJidAlt),
       control: isControlMessage(message),
       pdf: readPdf(message),

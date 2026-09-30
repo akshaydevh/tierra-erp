@@ -6,6 +6,7 @@ import * as schema from './schema'
 import { availabilitySql } from './schema'
 import type { RecentMessage, Store } from './store'
 import type {
+  AccountLink,
   Balance,
   ClaimedMessage,
   Customer,
@@ -83,6 +84,51 @@ export class DrizzleStore implements Store {
 
   async deleteSession(tokenHash: string): Promise<void> {
     await this.db.delete(schema.sessions).where(eq(schema.sessions.tokenHash, tokenHash))
+  }
+
+  async listAccountLinks(): Promise<AccountLink[]> {
+    const [people, relations] = await Promise.all([
+      this.db
+        .select({
+          id: schema.users.id,
+          name: schema.users.name,
+          email: schema.users.email,
+          role: schema.users.role,
+        })
+        .from(schema.users)
+        .orderBy(schema.users.name),
+      this.db
+        .select({
+          userId: schema.accountRelations.userId,
+          phoneNumber: schema.accountRelations.phoneNumber,
+        })
+        .from(schema.accountRelations),
+    ])
+    return people.map((user) => ({
+      id: user.id,
+      name: user.name,
+      email: user.email,
+      role: user.role as Role,
+      phoneNumber: relations.find((row) => row.userId === user.id)?.phoneNumber ?? null,
+    }))
+  }
+
+  async saveRelation(input: { userId: string; phoneNumber: string }): Promise<void> {
+    await this.db
+      .insert(schema.accountRelations)
+      .values({
+        id: newId('rel'),
+        userId: input.userId,
+        phoneNumber: input.phoneNumber,
+      })
+      .onConflictDoUpdate({
+        target: schema.accountRelations.userId,
+        set: { phoneNumber: input.phoneNumber },
+      })
+  }
+
+  async deleteRelation(userId: string): Promise<void> {
+    await this.db.delete(schema.accountRelations).where(eq(schema.accountRelations.userId, userId))
   }
 
   async listCustomers(): Promise<Customer[]> {

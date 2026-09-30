@@ -130,6 +130,16 @@ export const whatsappConnection = pgTable(
   ],
 )
 
+export const accountRelations = pgTable('account_relations', {
+  id: text('id').primaryKey(),
+  userId: text('user_id')
+    .notNull()
+    .unique()
+    .references(() => users.id, { onDelete: 'cascade' }),
+  phoneNumber: text('phone_number').notNull().unique(),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+})
+
 export const whatsappMessages = pgTable('whatsapp_messages', {
   id: text('id').primaryKey(),
   evolutionMessageId: text('evolution_message_id').notNull().unique(),

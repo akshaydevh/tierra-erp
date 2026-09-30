@@ -211,6 +211,49 @@ describe('auth and preview reads', () => {
     expect(body.connection.qrBase64.startsWith('data:image')).toBe(true)
     expect(ctx.evolution.created).toBe(1)
   })
+
+  it('links a phone to an account and keeps that number unique', async () => {
+    const office = await login(ctx.app, 'anju@tierra.test')
+    const denied = await ctx.app.request('/api/relations', {
+      method: 'PUT',
+      headers: { cookie: office, 'content-type': 'application/json' },
+      body: JSON.stringify({ userId: 'usr_anju', phoneNumber: '919812345678' }),
+    })
+    expect(denied.status).toBe(403)
+
+    const admin = await login(ctx.app, 'alex.thomas@tierra.test')
+    const listed = await ctx.app.request('/api/relations', { headers: { cookie: admin } })
+    const before = (await listed.json()) as { accounts: Array<{ id: string; phoneNumber: string | null }> }
+    expect(before.accounts.find((account) => account.id === 'usr_anju')?.phoneNumber).toBeNull()
+
+    const saved = await ctx.app.request('/api/relations', {
+      method: 'PUT',
+      headers: { cookie: admin, 'content-type': 'application/json' },
+      body: JSON.stringify({ userId: 'usr_anju', phoneNumber: '+91 98123 45678' }),
+    })
+    expect(saved.status).toBe(200)
+    const body = (await saved.json()) as { accounts: Array<{ id: string; name: string; phoneNumber: string | null }> }
+    expect(body.accounts.find((account) => account.id === 'usr_anju')).toMatchObject({
+      name: 'Anju',
+      phoneNumber: '919812345678',
+    })
+
+    const clash = await ctx.app.request('/api/relations', {
+      method: 'PUT',
+      headers: { cookie: admin, 'content-type': 'application/json' },
+      body: JSON.stringify({ userId: 'usr_joshy', phoneNumber: '9812345678' }),
+    })
+    expect(clash.status).toBe(409)
+
+    const cleared = await ctx.app.request('/api/relations', {
+      method: 'PUT',
+      headers: { cookie: admin, 'content-type': 'application/json' },
+      body: JSON.stringify({ userId: 'usr_anju', phoneNumber: '' }),
+    })
+    expect(cleared.status).toBe(200)
+    const after = (await cleared.json()) as { accounts: Array<{ id: string; phoneNumber: string | null }> }
+    expect(after.accounts.find((account) => account.id === 'usr_anju')?.phoneNumber).toBeNull()
+  })
 })
 
 describe('whatsapp purchase orders', () => {
@@ -442,6 +485,51 @@ describe('tierra bot', () => {
     expect(ctx.evolution.sent).toHaveLength(1)
     expect(ctx.lastJudge()?.chatKind).toBe('group')
     expect(ctx.judgeCalls()).toBe(1)
+  })
+
+  it('knows which account sent a message and which account was mentioned', async () => {
+    await ctx.store.saveRelation({ userId: 'usr_anju', phoneNumber: '919812345678' })
+    await ctx.store.saveRelation({ userId: 'usr_joshy', phoneNumber: '919700000001' })
+    await ctx.store.saveRelation({ userId: 'usr_alex', phoneNumber: '919900000000' })
+    ctx.setJudged({ intent: 'conversation', confidence: 0.9 })
+    const response = await post({
+      event: 'messages.upsert',
+      instance: 'tierra',
+      data: {
+        key: {
+          id: 'g-who',
+          remoteJid: GROUP,
+          fromMe: false,
+          participant: '919812345678@s.whatsapp.net',
+        },
+        message: {
+          extendedTextMessage: {
+            text: 'Tierra Bot, check with 919700000001',
+            contextInfo: { mentionedJid: ['919900000000@s.whatsapp.net'] },
+          },
+        },
+      },
+    })
+    expect(response.status).toBe(200)
+    expect(ctx.lastJudge()?.speaker).toMatchObject({ name: 'Anju', role: 'office', phoneNumber: '919812345678' })
+    expect(ctx.lastJudge()?.mentioned).toEqual([
+      { name: 'Joshy', role: 'admin', phoneNumber: '919700000001' },
+    ])
+    expect(ctx.lastChat()?.speaker?.name).toBe('Anju')
+    expect(ctx.lastChat()?.mentioned.map((person) => person.name)).toEqual(['Joshy'])
+  })
+
+  it('treats an unlinked personal chat as an unknown sender', async () => {
+    ctx.setJudged({ intent: 'conversation', confidence: 0.9 })
+    await post(textMessage('who-unknown', '919800000000@s.whatsapp.net', 'hello'))
+    expect(ctx.lastChat()?.speaker).toBeNull()
+    expect(ctx.lastChat()?.mentioned).toEqual([])
+  })
+
+  it('names the linked sender on a purchase-order reply', async () => {
+    await ctx.store.saveRelation({ userId: 'usr_alex', phoneNumber: '919812345678' })
+    await post(pdfBody('m-who'))
+    expect(ctx.evolution.sent[0]?.text).toContain('From Alex Thomas.')
   })
 
   it('answers a group @mention written in the text', async () => {

@@ -1,4 +1,5 @@
 import { TypeSafeClient, choice } from '@typesafe-ai/sdk'
+import type { Person } from '../whatsapp/people'
 import type { ChatKind } from '../whatsapp/parse'
 
 export type Intent = 'dashboard_question' | 'conversation' | 'needs_pdf' | 'ignore'
@@ -7,6 +8,8 @@ export type JudgeInput = {
   chatKind: ChatKind
   text: string
   quotedText: string | null
+  speaker: Person | null
+  mentioned: Person[]
 }
 
 export type JudgeResult = {
@@ -32,10 +35,12 @@ export function createJudge(env: { typesafeApiKey: string }): Judge {
         chat: input.chatKind,
         text: input.text,
         quotedText: input.quotedText,
+        speaker: input.speaker,
+        mentioned: input.mentioned,
       },
       questions: {
         intent: choice(
-          'What should Tierra Bot do with this WhatsApp message? dashboard_question means the sender is asking about orders, stock, customers, or the command centre. conversation means a normal reply that does not need records. needs_pdf means they want an order created or checked but this message has no purchase-order PDF. ignore means there is nothing to do.',
+          'What should Tierra Bot do with this WhatsApp message? The speaker and mentioned fields name Tierra accounts when a phone number is linked; use that identity as context. dashboard_question means the sender is asking about orders, stock, customers, or the command centre. conversation means a normal reply that does not need records. needs_pdf means they want an order created or checked but this message has no purchase-order PDF. ignore means there is nothing to do.',
           INTENT_CRITERIA,
         ),
       },

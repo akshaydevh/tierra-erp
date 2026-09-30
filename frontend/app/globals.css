@@ -32,7 +32,7 @@ body::after {
 }
 h1, h2, h3, p { margin: 0; }
 a { color: inherit; text-decoration: none; }
-button, input { font: inherit; color: inherit; }
+button, input, select { font: inherit; color: inherit; }
 button { cursor: pointer; border: none; background: none; }
 .num { font-variant-numeric: tabular-nums; }
 svg.i { width: 1.25em; height: 1.25em; fill: none; stroke: currentColor; stroke-width: 16; stroke-linecap: round; stroke-linejoin: round; flex: none; }
@@ -75,7 +75,18 @@ svg.i { width: 1.25em; height: 1.25em; fill: none; stroke: currentColor; stroke-
 }
 .field { display: flex; flex-direction: column; gap: 8px; }
 .field label { font-size: 14px; font-weight: 600; color: var(--inksoft); }
-.field input {
+.field label.sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+.field input, .field select {
   width: 100%;
   height: 54px;
   padding: 0 20px;
@@ -85,7 +96,7 @@ svg.i { width: 1.25em; height: 1.25em; fill: none; stroke: currentColor; stroke-
   font-weight: 500;
   font-size: 15px;
 }
-.field input:focus { outline: none; border-color: var(--ink); box-shadow: 0 0 0 1px var(--ink); }
+.field input:focus, .field select:focus { outline: none; border-color: var(--ink); box-shadow: 0 0 0 1px var(--ink); }
 .btn-ink, .btn-pri {
   height: 48px;
   padding: 0 22px;
@@ -221,6 +232,19 @@ td .sub { font-size: 12px; color: var(--inksoft); margin-top: 2px; }
   width: 240px; height: 240px; background: #fff; border: 1px solid var(--line); border-radius: 12px; padding: 12px;
 }
 .qr img { width: 100%; height: 100%; object-fit: contain; }
+.rels { display: flex; flex-direction: column; }
+.rel {
+  display: grid;
+  grid-template-columns: minmax(160px, 1fr) minmax(180px, 260px) auto;
+  gap: 16px;
+  align-items: center;
+  padding: 16px 0;
+  border-top: 1px solid var(--line);
+}
+.rel:first-child { border-top: none; padding-top: 0; }
+.rel:last-child { padding-bottom: 0; }
+.rel b { display: block; font-size: 14px; font-weight: 700; }
+.rel .field input { height: 40px; padding: 0 14px; }
 .empty { padding: 28px; color: var(--inksoft); }
 
 @media (max-width: 1240px) {
@@ -237,4 +261,5 @@ td .sub { font-size: 12px; color: var(--inksoft); margin-top: 2px; }
   .nav a, .foot a, .foot button { justify-content: center; padding: 12px; }
   .page, .topbar { padding-left: 20px; padding-right: 20px; }
   .grid3 { grid-template-columns: 1fr; }
+  .rel { grid-template-columns: 1fr; align-items: stretch; }
 }

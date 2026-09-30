@@ -43,6 +43,14 @@ export type InventoryItem = {
   available: number
 }
 
+export type AccountLink = {
+  id: string
+  name: string
+  email: string
+  role: Role
+  phoneNumber: string | null
+}
+
 export type WhatsappConnection = {
   instanceName: string
   status: 'disconnected' | 'qr_pending' | 'connected'

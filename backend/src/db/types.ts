@@ -18,6 +18,14 @@ export type PublicUser = {
   role: Role
 }
 
+export type AccountLink = {
+  id: string
+  name: string
+  email: string
+  role: Role
+  phoneNumber: string | null
+}
+
 export type Customer = {
   id: string
   name: string

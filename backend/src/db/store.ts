@@ -7,6 +7,7 @@ import type {
   NewOrderLine,
   OrderLineRecord,
   OrderRecord,
+  AccountLink,
   PublicUser,
   StoredDocument,
   User,
@@ -27,6 +28,9 @@ export interface Store {
   createSession(input: { userId: string; tokenHash: string; expiresAt: Date }): Promise<void>
   findUserByTokenHash(tokenHash: string, now: Date): Promise<PublicUser | null>
   deleteSession(tokenHash: string): Promise<void>
+  listAccountLinks(): Promise<AccountLink[]>
+  saveRelation(input: { userId: string; phoneNumber: string }): Promise<void>
+  deleteRelation(userId: string): Promise<void>
 
   listCustomers(): Promise<Customer[]>
   listItems(): Promise<Item[]>

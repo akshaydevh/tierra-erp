@@ -13,6 +13,8 @@ import type { AgentDeps } from './agent/handle-message'
 import { commandCentre, inventoryRows, orderDetail, orderList } from './domain/reads'
 import type { PublicUser } from './db/types'
 import { acceptWebhook } from './whatsapp/accept'
+import { phonesMatch } from './whatsapp/people'
+import { phoneDigits } from './whatsapp/qr'
 
 export type AppDeps = AgentDeps & {
   now: () => Date
@@ -23,6 +25,11 @@ export type AppDeps = AgentDeps & {
 const loginSchema = z.object({
   email: z.string().email(),
   password: z.string().min(1),
+})
+
+const relationSchema = z.object({
+  userId: z.string().min(1),
+  phoneNumber: z.string(),
 })
 
 function publicConnection(connection: {
@@ -108,6 +115,35 @@ export function createApp(deps: AppDeps) {
 
   app.get('/api/whatsapp', async (c) => {
     return c.json({ connection: publicConnection(await deps.store.getWhatsapp()) })
+  })
+
+  app.get('/api/relations', async (c) => {
+    return c.json({ accounts: await deps.store.listAccountLinks() })
+  })
+
+  app.put('/api/relations', async (c) => {
+    const user = await userFrom(c.req.header('cookie'))
+    if (!user) return c.json({ error: 'Unauthorized' }, 401)
+    if (user.role !== 'admin') return c.json({ error: 'Only an admin can link a phone number' }, 403)
+    const parsed = relationSchema.safeParse(await c.req.json().catch(() => null))
+    if (!parsed.success) return c.json({ error: 'Choose an account and a phone number' }, 400)
+    const accounts = await deps.store.listAccountLinks()
+    const account = accounts.find((row) => row.id === parsed.data.userId)
+    if (!account) return c.json({ error: 'That account does not exist' }, 404)
+    const digits = phoneDigits(parsed.data.phoneNumber)
+    if (digits.length === 0) {
+      await deps.store.deleteRelation(account.id)
+      return c.json({ accounts: await deps.store.listAccountLinks() })
+    }
+    if (digits.length < 8 || digits.length > 15) {
+      return c.json({ error: 'Enter a phone number with 8 to 15 digits' }, 400)
+    }
+    const taken = accounts.find(
+      (row) => row.id !== account.id && row.phoneNumber && phonesMatch(row.phoneNumber, digits),
+    )
+    if (taken) return c.json({ error: `${taken.name} already uses that number` }, 409)
+    await deps.store.saveRelation({ userId: account.id, phoneNumber: digits })
+    return c.json({ accounts: await deps.store.listAccountLinks() })
   })
 
   app.post('/api/whatsapp/pair', async (c) => {
