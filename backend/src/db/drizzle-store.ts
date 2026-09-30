@@ -1,10 +1,10 @@
 import { randomUUID } from 'node:crypto'
-import { and, desc, eq, gt } from 'drizzle-orm'
+import { and, desc, eq, gt, inArray } from 'drizzle-orm'
 import type { PostgresJsDatabase } from 'drizzle-orm/postgres-js'
 import { availableQuantity, StockShortError } from '../domain/inventory'
 import * as schema from './schema'
 import { availabilitySql } from './schema'
-import type { Store } from './store'
+import type { RecentMessage, Store } from './store'
 import type {
   Balance,
   ClaimedMessage,
@@ -221,6 +221,21 @@ export class DrizzleStore implements Store {
       .onConflictDoNothing({ target: schema.whatsappMessages.evolutionMessageId })
       .returning({ id: schema.whatsappMessages.id })
     return inserted.length > 0
+  }
+
+  async listRecentMessages(remoteJids: string[], limit: number): Promise<RecentMessage[]> {
+    if (remoteJids.length === 0 || limit <= 0) return []
+    const rows = await this.db
+      .select({
+        remoteJid: schema.whatsappMessages.remoteJid,
+        fromMe: schema.whatsappMessages.fromMe,
+        body: schema.whatsappMessages.body,
+      })
+      .from(schema.whatsappMessages)
+      .where(inArray(schema.whatsappMessages.remoteJid, remoteJids))
+      .orderBy(desc(schema.whatsappMessages.createdAt))
+      .limit(limit)
+    return rows.reverse()
   }
 
   async releaseMessage(evolutionMessageId: string): Promise<void> {

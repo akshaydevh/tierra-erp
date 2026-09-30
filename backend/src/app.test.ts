@@ -382,11 +382,12 @@ describe('tierra bot', () => {
     expect(ctx.evolution.reactions).toHaveLength(1)
   })
 
-  it('does not include dashboard records when a customer chat asks about stock', async () => {
+  it('answers an operations question from the full dashboard', async () => {
     ctx.setJudged({ intent: 'dashboard_question', confidence: 0.9 })
     await post(textMessage('cust-1', '919800000000@s.whatsapp.net', 'what is your stock'))
-    expect(ctx.lastChat()?.snapshot).toBeNull()
-    expect(ctx.evolution.sent[0]?.text).toBe('> 🧞‍♂️ Tierra Bot:\n\nTierra Bot here.')
+    expect(ctx.lastChat()?.snapshot?.inventory.some((row) => row.sku === 'BAN-80G')).toBe(true)
+    expect(ctx.lastChat()?.snapshot?.orders.length).toBeGreaterThan(0)
+    expect(ctx.evolution.sent[0]?.text).toContain('available -60')
   })
 
   it('ignores the owner writing in someone else\'s chat', async () => {
@@ -497,8 +498,20 @@ describe('tierra bot', () => {
     await post(textMessage('unsure', SELF, 'Hi', true))
     expect(ctx.chatCalls()).toBe(1)
     expect(ctx.lastChat()?.unsure).toBe(true)
-    expect(ctx.lastChat()?.snapshot).toBeNull()
+    expect(ctx.lastChat()?.snapshot?.commandCentre.openOrders).toBe(3)
     expect(ctx.evolution.sent[0]?.text).toContain('brief on what is going on in the factory')
+  })
+
+  it('keeps the dashboard available when the owner agrees to a factory brief', async () => {
+    ctx.setJudged({ intent: 'conversation', confidence: 0.4 })
+    await post(textMessage('hi-1', SELF, 'Hello', true))
+    ctx.setJudged({ intent: 'conversation', confidence: 0.9 })
+    await post(textMessage('yes-1', SELF, 'Yes please', true))
+    expect(ctx.lastChat()?.snapshot?.inventory.some((row) => row.sku === 'BAN-80G')).toBe(true)
+    expect(ctx.lastChat()?.history?.some((turn) => turn.text === 'Hello' && turn.speaker === 'owner')).toBe(
+      true,
+    )
+    expect(ctx.lastChat()?.history?.some((turn) => turn.speaker === 'tierra')).toBe(true)
   })
 
   it('answers Message Yourself when the saved number still has a device suffix', async () => {

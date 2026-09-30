@@ -16,6 +16,12 @@ import type {
 
 export type { StockShortError }
 
+export type RecentMessage = {
+  remoteJid: string
+  fromMe: boolean
+  body: string | null
+}
+
 export interface Store {
   findUserByEmail(email: string): Promise<User | null>
   createSession(input: { userId: string; tokenHash: string; expiresAt: Date }): Promise<void>
@@ -38,6 +44,7 @@ export interface Store {
   ): Promise<WhatsappConnection>
 
   claimMessage(message: ClaimedMessage): Promise<boolean>
+  listRecentMessages(remoteJids: string[], limit: number): Promise<RecentMessage[]>
   releaseMessage(evolutionMessageId: string): Promise<void>
   insertDocument(input: StoredDocument & { messageId: string }): Promise<string>
   createOrder(input: {

@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { StockShortError } from '../domain/inventory'
 import { availableQuantity } from '../domain/inventory'
 import { seedBalances, seedCustomers, seedItems, seedOrders, seedUsers } from './seed-data'
-import type { Store } from './store'
+import type { RecentMessage, Store } from './store'
 import type {
   Balance,
   ClaimedMessage,
@@ -147,6 +147,14 @@ export class MemoryStore implements Store {
     }
     this.messages.push({ ...message })
     return true
+  }
+
+  async listRecentMessages(remoteJids: string[], limit: number): Promise<RecentMessage[]> {
+    const jids = new Set(remoteJids)
+    return this.messages
+      .filter((row) => jids.has(row.remoteJid))
+      .slice(-limit)
+      .map((row) => ({ remoteJid: row.remoteJid, fromMe: row.fromMe, body: row.body }))
   }
 
   async releaseMessage(evolutionMessageId: string): Promise<void> {

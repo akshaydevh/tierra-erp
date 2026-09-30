@@ -11,7 +11,7 @@ import { StockShortError } from '../domain/inventory'
 import type { Store } from '../db/store'
 import { ExtractError } from './extract'
 import type { JudgeInput, JudgeResult } from './judge'
-import type { ChatInput } from './reply'
+import type { ChatInput, ChatTurn } from './reply'
 import type { EvolutionClient } from '../whatsapp/evolution'
 import { deliveryAddress, replyChatJid, type ChatKind, type IncomingMessage } from '../whatsapp/parse'
 
@@ -172,20 +172,34 @@ export async function handleIncoming(
     await sendBotText(deps, message, UNDECIDED)
     return
   }
-  if (judged.confidence < INTENT_CONFIDENCE_FLOOR || judged.intent === 'ignore') {
-    if (!mustReply && judged.intent === 'ignore' && judged.confidence >= INTENT_CONFIDENCE_FLOOR) return
-    const reply = await deps.completeChat({ text, quotedText, snapshot: null, unsure: true })
-    await sendBotText(deps, message, reply)
-    return
-  }
-  if (judged.intent === 'needs_pdf') {
+  if (judged.intent === 'needs_pdf' && judged.confidence >= INTENT_CONFIDENCE_FLOOR) {
     await sendBotText(deps, message, NEED_PDF)
     return
   }
+  if (
+    !mustReply &&
+    judged.intent === 'ignore' &&
+    judged.confidence >= INTENT_CONFIDENCE_FLOOR
+  ) {
+    return
+  }
 
-  const includeSnapshot =
-    judged.intent === 'dashboard_question' && (chatKind === 'self' || chatKind === 'group')
-  const snapshot = includeSnapshot ? await dashboardSnapshot(deps.store) : null
-  const reply = await deps.completeChat({ text, quotedText, snapshot })
+  const unsure = judged.confidence < INTENT_CONFIDENCE_FLOOR || judged.intent === 'ignore'
+  const ownerDesk = chatKind === 'self' || chatKind === 'group'
+  const snapshot =
+    ownerDesk || judged.intent === 'dashboard_question' ? await dashboardSnapshot(deps.store) : null
+  const jids = [message.remoteJid, message.aliasJid].filter((jid): jid is string => Boolean(jid))
+  const recent = await deps.store.listRecentMessages(jids, 8)
+  const history: ChatTurn[] = recent.flatMap((row) => {
+    const turn = row.body?.trim()
+    if (!turn) return []
+    const speaker: ChatTurn['speaker'] = turn.startsWith(TIERRA_HEADER)
+      ? 'tierra'
+      : row.fromMe
+        ? 'owner'
+        : 'contact'
+    return [{ speaker, text: turn }]
+  })
+  const reply = await deps.completeChat({ text, quotedText, snapshot, history, unsure })
   await sendBotText(deps, message, reply)
 }

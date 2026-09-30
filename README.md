@@ -52,7 +52,7 @@ Point the API at it with `EVOLUTION_URL=http://localhost:8081`. From inside Dock
 
 An admin opens Settings, starts pairing, and scans the QR. The connected account is Tierra Bot, the purchase-order agent.
 
-On a personal chat, and in Message Yourself, Tierra Bot reacts with 👀 and then replies. Replies are written with `OPENAI_API_KEY` (OpenAI chat completions, `OPENAI_MODEL`). Message Yourself and a group message that names Tierra Bot or mentions the connected number can ask about live dashboard data: orders, customers, inventory, and the command centre. Other modules on the nav have no records yet. A customer’s personal chat still gets a reply, without those internal figures. Text never creates an order.
+On a personal chat, and in Message Yourself, Tierra Bot reacts with 👀 and then replies. Replies are written with `OPENAI_API_KEY` (OpenAI chat completions, `OPENAI_MODEL`). Message Yourself, a mentioned group message, and an operations question can use the live dashboard: command centre, customers, orders with lines, and inventory. Other nav modules have no records yet. A bare greeting does not dump those figures. Text never creates an order.
 
 A PDF on a personal chat, in Message Yourself, or in a group message that mentions Tierra Bot is read with the same OpenAI key. Tierra Bot matches the customer and lines to the seeded masters, compares quantities with available stock, and either creates an open order or replies on that chat. Group messages that do not mention Tierra Bot are ignored.
 
