@@ -190,17 +190,39 @@ svg.i { width: 1.25em; height: 1.25em; fill: none; stroke: currentColor; stroke-
 .sechead h3 { font-size: 18px; font-weight: 700; letter-spacing: -0.01em; }
 .sechead p { margin-top: 4px; font-size: 13px; color: var(--inksoft); }
 .zid { font-size: 10px; font-weight: 700; letter-spacing: 0.22em; text-transform: uppercase; color: var(--mute); }
-.pick { display: flex; flex-direction: column; gap: 6px; min-width: 220px; }
-.pick span { font-size: 10px; font-weight: 700; letter-spacing: 0.22em; text-transform: uppercase; color: var(--mute); }
-.pick select {
-  height: 40px;
-  padding: 0 12px;
-  background: var(--paper);
-  border: 1px solid var(--line);
-  border-radius: 12px;
-  font-weight: 600;
+.drophead {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 16px 20px;
+  text-align: left;
+  background: rgba(243, 244, 241, 0.6);
 }
-.pick select:focus { outline: none; border-color: var(--ink); box-shadow: 0 0 0 1px var(--ink); }
+.drophead b { display: block; font-size: 14px; }
+.drophead .sub { display: block; margin-top: 2px; font-size: 12px; color: var(--inksoft); letter-spacing: 0.08em; }
+.dropmark {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 32px;
+  padding: 0 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--paper);
+  font-size: 12px;
+  font-weight: 700;
+}
+.dropmark::after {
+  content: "";
+  width: 0;
+  height: 0;
+  border-left: 4px solid transparent;
+  border-right: 4px solid transparent;
+  border-top: 5px solid currentColor;
+}
+.drophead[aria-expanded='true'] .dropmark::after { transform: rotate(180deg); }
 .grid3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 24px; }
 .card { background: var(--paper); border: 1px solid var(--line); border-radius: 16px; box-shadow: var(--sh-sm); }
 .p6 { padding: 24px; }
