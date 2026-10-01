@@ -190,6 +190,17 @@ svg.i { width: 1.25em; height: 1.25em; fill: none; stroke: currentColor; stroke-
 .sechead h3 { font-size: 18px; font-weight: 700; letter-spacing: -0.01em; }
 .sechead p { margin-top: 4px; font-size: 13px; color: var(--inksoft); }
 .zid { font-size: 10px; font-weight: 700; letter-spacing: 0.22em; text-transform: uppercase; color: var(--mute); }
+.pick { display: flex; flex-direction: column; gap: 6px; min-width: 220px; }
+.pick span { font-size: 10px; font-weight: 700; letter-spacing: 0.22em; text-transform: uppercase; color: var(--mute); }
+.pick select {
+  height: 40px;
+  padding: 0 12px;
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  font-weight: 600;
+}
+.pick select:focus { outline: none; border-color: var(--ink); box-shadow: 0 0 0 1px var(--ink); }
 .grid3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 24px; }
 .card { background: var(--paper); border: 1px solid var(--line); border-radius: 16px; box-shadow: var(--sh-sm); }
 .p6 { padding: 24px; }
