@@ -9,7 +9,6 @@ import {
   pgTable,
   text,
   timestamp,
-  unique,
   uniqueIndex,
 } from 'drizzle-orm/pg-core'
 
@@ -85,10 +84,12 @@ export const inventoryBalances = pgTable(
     onHand: integer('on_hand').notNull(),
   },
   (table) => [
-    unique('inventory_balances_owner_item').on(table.customerId, table.itemId),
     uniqueIndex('inventory_balances_plant_item')
       .on(table.itemId)
       .where(sql`${table.customerId} is null`),
+    uniqueIndex('inventory_balances_customer_item')
+      .on(table.customerId, table.itemId)
+      .where(sql`${table.customerId} is not null`),
   ],
 )
 

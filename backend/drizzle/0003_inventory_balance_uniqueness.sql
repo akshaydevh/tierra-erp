@@ -1,0 +1,2 @@
+ALTER TABLE "inventory_balances" DROP CONSTRAINT "inventory_balances_owner_item";--> statement-breakpoint
+CREATE UNIQUE INDEX "inventory_balances_customer_item" ON "inventory_balances" USING btree ("customer_id","item_id") WHERE "inventory_balances"."customer_id" is not null;
