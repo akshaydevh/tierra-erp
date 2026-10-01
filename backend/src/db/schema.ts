@@ -9,6 +9,8 @@ import {
   pgTable,
   text,
   timestamp,
+  unique,
+  uniqueIndex,
 } from 'drizzle-orm/pg-core'
 
 export const bytea = customType<{ data: Buffer; driverData: Buffer }>({
@@ -55,19 +57,40 @@ export const customers = pgTable('customers', {
   code: text('code').notNull().unique(),
 })
 
-export const items = pgTable('items', {
-  id: text('id').primaryKey(),
-  sku: text('sku').notNull().unique(),
-  name: text('name').notNull(),
-  unit: text('unit').notNull(),
-})
+export const items = pgTable(
+  'items',
+  {
+    id: text('id').primaryKey(),
+    sku: text('sku').notNull().unique(),
+    name: text('name').notNull(),
+    unit: text('unit').notNull(),
+    kind: text('kind').notNull(),
+  },
+  (table) => [
+    check(
+      'items_kind_check',
+      sql`${table.kind} in ('finished_good', 'laminate', 'seasoning', 'carton')`,
+    ),
+  ],
+)
 
-export const inventoryBalances = pgTable('inventory_balances', {
-  itemId: text('item_id')
-    .primaryKey()
-    .references(() => items.id),
-  onHand: integer('on_hand').notNull(),
-})
+export const inventoryBalances = pgTable(
+  'inventory_balances',
+  {
+    id: text('id').primaryKey(),
+    customerId: text('customer_id').references(() => customers.id),
+    itemId: text('item_id')
+      .notNull()
+      .references(() => items.id),
+    onHand: integer('on_hand').notNull(),
+  },
+  (table) => [
+    unique('inventory_balances_owner_item').on(table.customerId, table.itemId),
+    uniqueIndex('inventory_balances_plant_item')
+      .on(table.itemId)
+      .where(sql`${table.customerId} is null`),
+  ],
+)
 
 export const orders = pgTable(
   'orders',
@@ -155,8 +178,9 @@ export const availabilitySql = sql`
          b.on_hand::int as on_hand,
          coalesce(sum(l.quantity) filter (where o.status = 'open'), 0)::int as reserved
   from items i
-  join inventory_balances b on b.item_id = i.id
+  join inventory_balances b on b.item_id = i.id and b.customer_id is null
   left join order_lines l on l.item_id = i.id
   left join orders o on o.id = l.order_id
+  where i.kind = 'finished_good'
   group by i.id, b.on_hand
 `

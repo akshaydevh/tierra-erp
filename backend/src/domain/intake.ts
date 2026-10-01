@@ -67,16 +67,17 @@ export function matchCustomer(name: string, customers: Customer[]): Customer | u
 }
 
 export function matchItem(line: ExtractedLine, items: Item[]): Item | undefined {
+  const goods = items.filter((item) => item.kind === 'finished_good')
   const code = line.buyerCode ? norm(line.buyerCode) : ''
   if (code) {
-    const bySku = items.find((item) => norm(item.sku) === code)
+    const bySku = goods.find((item) => norm(item.sku) === code)
     if (bySku) return bySku
   }
   const query = norm(line.description)
   return (
-    items.find((item) => norm(item.name) === query || norm(item.sku) === query) ??
-    bestInclude(items, (item) => item.sku, query) ??
-    bestInclude(items, (item) => item.name, query)
+    goods.find((item) => norm(item.name) === query || norm(item.sku) === query) ??
+    bestInclude(goods, (item) => item.sku, query) ??
+    bestInclude(goods, (item) => item.name, query)
   )
 }
 

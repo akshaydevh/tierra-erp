@@ -1,7 +1,15 @@
 import type { PostgresJsDatabase } from 'drizzle-orm/postgres-js'
 import { hashPassword } from '../auth/password'
 import * as schema from './schema'
-import { DEV_PASSWORD, seedBalances, seedCustomers, seedItems, seedOrders, seedUsers } from './seed-data'
+import {
+  DEV_PASSWORD,
+  seedBalances,
+  seedCustomers,
+  seedItems,
+  seedMaterialItems,
+  seedOrders,
+  seedUsers,
+} from './seed-data'
 
 type Database = PostgresJsDatabase<typeof schema>
 
@@ -18,7 +26,7 @@ export async function seedIfEmpty(db: Database): Promise<void> {
       })),
     )
     await tx.insert(schema.customers).values(seedCustomers)
-    await tx.insert(schema.items).values(seedItems)
+    await tx.insert(schema.items).values([...seedItems, ...seedMaterialItems])
     await tx.insert(schema.inventoryBalances).values(seedBalances)
     for (const order of seedOrders) {
       await tx.insert(schema.orders).values({
@@ -48,4 +56,12 @@ export async function seedIfEmpty(db: Database): Promise<void> {
       status: 'disconnected',
     })
   })
+}
+
+export async function seedCustomerMaterials(db: Database): Promise<void> {
+  await db.insert(schema.items).values(seedMaterialItems).onConflictDoNothing({ target: schema.items.id })
+  await db
+    .insert(schema.inventoryBalances)
+    .values(seedBalances.filter((row) => row.customerId))
+    .onConflictDoNothing({ target: schema.inventoryBalances.id })
 }

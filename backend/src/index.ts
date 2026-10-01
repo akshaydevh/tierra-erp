@@ -8,7 +8,7 @@ import { createApp } from './app'
 import { DrizzleStore } from './db/drizzle-store'
 import { migrate } from './db/migrate'
 import * as schema from './db/schema'
-import { seedIfEmpty } from './db/seed'
+import { seedCustomerMaterials, seedIfEmpty } from './db/seed'
 import { loadEnv } from './env'
 import { HttpEvolution } from './whatsapp/evolution'
 
@@ -18,6 +18,7 @@ async function main() {
   await migrate(sql)
   const db = drizzle(sql, { schema })
   await seedIfEmpty(db)
+  await seedCustomerMaterials(db)
   const app = createApp({
     store: new DrizzleStore(db),
     evolution: new HttpEvolution(env),

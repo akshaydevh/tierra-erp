@@ -20,7 +20,7 @@ import type {
   WhatsappConnection,
   WhatsappStatus,
 } from './types'
-import { toPublicUser } from './types'
+import { asItemKind, toPublicUser } from './types'
 
 type Database = PostgresJsDatabase<typeof schema>
 
@@ -136,12 +136,18 @@ export class DrizzleStore implements Store {
   }
 
   async listItems(): Promise<Item[]> {
-    return this.db.select().from(schema.items).orderBy(schema.items.sku)
+    const rows = await this.db.select().from(schema.items).orderBy(schema.items.sku)
+    return rows.map((row) => ({ ...row, kind: asItemKind(row.kind) }))
   }
 
   async listBalances(): Promise<Balance[]> {
     const rows = await this.db.select().from(schema.inventoryBalances)
-    return rows.map((row) => ({ itemId: row.itemId, onHand: row.onHand }))
+    return rows.map((row) => ({
+      id: row.id,
+      customerId: row.customerId,
+      itemId: row.itemId,
+      onHand: row.onHand,
+    }))
   }
 
   async listOrders(): Promise<OrderRecord[]> {

@@ -114,8 +114,8 @@ async function setup() {
         return 'Hi. What would you like to know? I can give you a brief on what is going on in the factory.'
       }
       if (input.snapshot) {
-        const row = input.snapshot.inventory.find((item) => item.sku === 'BAN-80G')
-        return `Banana chips 80g available ${row?.available ?? 'unknown'}.`
+        const row = input.snapshot.inventory.find((item) => item.sku === 'PMPL-BS-40')
+        return `Beyond Snack laminate on hand ${row?.onHand ?? 'unknown'}.`
       }
       return 'Tierra Bot here.'
     },
@@ -184,14 +184,28 @@ describe('auth and preview reads', () => {
     expect(body.user.role).toBe('admin')
   })
 
-  it('reports reserved stock and the overdrawn 80g line', async () => {
+  it('reports each customer’s materials and the overdrawn 80g line', async () => {
     const cookie = await login(ctx.app, 'anju@tierra.test')
     const response = await ctx.app.request('/api/inventory', { headers: { cookie } })
     const body = (await response.json()) as {
-      items: Array<{ sku: string; onHand: number; reserved: number; available: number }>
+      items: Array<{ customerName: string; sku: string; kind: string; onHand: number }>
     }
-    const eighty = body.items.find((item) => item.sku === 'BAN-80G')
-    expect(eighty).toMatchObject({ onHand: 40, reserved: 100, available: -60 })
+    expect(body.items.find((item) => item.sku === 'PMPL-BS-40')).toMatchObject({
+      customerName: 'Beyond Snack',
+      kind: 'laminate',
+      onHand: 860,
+    })
+    expect(body.items.find((item) => item.sku === 'FLV-TY-SALT')).toMatchObject({
+      customerName: 'Guiltfree',
+      kind: 'seasoning',
+      onHand: 96,
+    })
+    expect(body.items.find((item) => item.sku === 'CTN-REL-CRT')).toMatchObject({
+      customerName: 'Reliance Retail',
+      kind: 'carton',
+      onHand: 175,
+    })
+    expect(body.items.some((item) => item.sku === 'BAN-80G')).toBe(false)
     const centre = await ctx.app.request('/api/command-centre', { headers: { cookie } })
     const summary = (await centre.json()) as { openOrders: number; shortLines: number }
     expect(summary.openOrders).toBe(3)
@@ -413,9 +427,9 @@ describe('tierra bot', () => {
     ])
     expect(ctx.evolution.sent).toHaveLength(1)
     expect(ctx.evolution.sent[0]?.number).toBe('919900000000')
-    expect(ctx.evolution.sent[0]?.text).toContain('available -60')
+    expect(ctx.evolution.sent[0]?.text).toContain('on hand 860')
     expect(ctx.lastJudge()?.chatKind).toBe('self')
-    expect(ctx.lastChat()?.snapshot?.inventory.some((row) => row.sku === 'BAN-80G')).toBe(true)
+    expect(ctx.lastChat()?.snapshot?.inventory.some((row) => row.sku === 'PMPL-BS-40')).toBe(true)
     expect(ctx.lastChat()?.snapshot?.emptyModules).toContain('My Day')
 
     const echo = await post(textMessage('out-1', SELF, 'Banana chips 80g available -60.', true))
@@ -428,9 +442,9 @@ describe('tierra bot', () => {
   it('answers an operations question from the full dashboard', async () => {
     ctx.setJudged({ intent: 'dashboard_question', confidence: 0.9 })
     await post(textMessage('cust-1', '919800000000@s.whatsapp.net', 'what is your stock'))
-    expect(ctx.lastChat()?.snapshot?.inventory.some((row) => row.sku === 'BAN-80G')).toBe(true)
+    expect(ctx.lastChat()?.snapshot?.inventory.some((row) => row.sku === 'PMPL-BS-40')).toBe(true)
     expect(ctx.lastChat()?.snapshot?.orders.length).toBeGreaterThan(0)
-    expect(ctx.evolution.sent[0]?.text).toContain('available -60')
+    expect(ctx.evolution.sent[0]?.text).toContain('on hand 860')
   })
 
   it('ignores the owner writing in someone else\'s chat', async () => {
@@ -595,7 +609,7 @@ describe('tierra bot', () => {
     await post(textMessage('hi-1', SELF, 'Hello', true))
     ctx.setJudged({ intent: 'conversation', confidence: 0.9 })
     await post(textMessage('yes-1', SELF, 'Yes please', true))
-    expect(ctx.lastChat()?.snapshot?.inventory.some((row) => row.sku === 'BAN-80G')).toBe(true)
+    expect(ctx.lastChat()?.snapshot?.inventory.some((row) => row.sku === 'PMPL-BS-40')).toBe(true)
     expect(ctx.lastChat()?.history?.some((turn) => turn.text === 'Hello' && turn.speaker === 'owner')).toBe(
       true,
     )

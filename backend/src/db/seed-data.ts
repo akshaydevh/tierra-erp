@@ -30,15 +30,90 @@ export const seedCustomers: Customer[] = [
 ]
 
 export const seedItems: Item[] = [
-  { id: 'item_ban40', sku: 'BAN-40G', name: 'Banana chips 40g', unit: 'pouch' },
-  { id: 'item_ban80', sku: 'BAN-80G', name: 'Banana chips 80g', unit: 'pouch' },
-  { id: 'item_cas50', sku: 'CAS-50G', name: 'Cassava chips 50g', unit: 'pouch' },
+  { id: 'item_ban40', sku: 'BAN-40G', name: 'Banana chips 40g', unit: 'pouch', kind: 'finished_good' },
+  { id: 'item_ban80', sku: 'BAN-80G', name: 'Banana chips 80g', unit: 'pouch', kind: 'finished_good' },
+  { id: 'item_cas50', sku: 'CAS-50G', name: 'Cassava chips 50g', unit: 'pouch', kind: 'finished_good' },
+]
+
+export const seedMaterialItems: Item[] = [
+  {
+    id: 'item_lam_bs40',
+    sku: 'PMPL-BS-40',
+    name: 'Pouch film, Beyond Snack 40g',
+    unit: 'kg',
+    kind: 'laminate',
+  },
+  {
+    id: 'item_sea_bs',
+    sku: 'FLV-BS-SALT',
+    name: 'Salted seasoning blend',
+    unit: 'kg',
+    kind: 'seasoning',
+  },
+  {
+    id: 'item_ctn_bs40',
+    sku: 'CTN-BS-40',
+    name: 'Shipper, 24 pouches',
+    unit: 'carton',
+    kind: 'carton',
+  },
+  {
+    id: 'item_lam_ty75',
+    sku: 'PMPL-TY-75',
+    name: 'Pouch film, Too Yumm classic salted 75g',
+    unit: 'kg',
+    kind: 'laminate',
+  },
+  {
+    id: 'item_sea_ty',
+    sku: 'FLV-TY-SALT',
+    name: 'Classic salt blend',
+    unit: 'kg',
+    kind: 'seasoning',
+  },
+  {
+    id: 'item_ctn_ty',
+    sku: 'CTN-TY-12',
+    name: 'Shipper, 12 pouches',
+    unit: 'carton',
+    kind: 'carton',
+  },
+  {
+    id: 'item_lam_rel',
+    sku: 'PMPL-REL-100',
+    name: 'Pouch film, 100g',
+    unit: 'kg',
+    kind: 'laminate',
+  },
+  {
+    id: 'item_sea_rel',
+    sku: 'FLV-REL-SALT',
+    name: 'Salted seasoning blend',
+    unit: 'kg',
+    kind: 'seasoning',
+  },
+  {
+    id: 'item_ctn_rel',
+    sku: 'CTN-REL-CRT',
+    name: 'CRT shipper, 56 pouches',
+    unit: 'carton',
+    kind: 'carton',
+  },
 ]
 
 export const seedBalances = [
-  { itemId: 'item_ban40', onHand: 4800 },
-  { itemId: 'item_ban80', onHand: 40 },
-  { itemId: 'item_cas50', onHand: 2200 },
+  { id: 'bal_ban40', customerId: null, itemId: 'item_ban40', onHand: 4800 },
+  { id: 'bal_ban80', customerId: null, itemId: 'item_ban80', onHand: 40 },
+  { id: 'bal_cas50', customerId: null, itemId: 'item_cas50', onHand: 2200 },
+  { id: 'bal_lam_bs40', customerId: 'cus_beyond', itemId: 'item_lam_bs40', onHand: 860 },
+  { id: 'bal_sea_bs', customerId: 'cus_beyond', itemId: 'item_sea_bs', onHand: 140 },
+  { id: 'bal_ctn_bs40', customerId: 'cus_beyond', itemId: 'item_ctn_bs40', onHand: 480 },
+  { id: 'bal_lam_ty75', customerId: 'cus_guiltfree', itemId: 'item_lam_ty75', onHand: 1240 },
+  { id: 'bal_sea_ty', customerId: 'cus_guiltfree', itemId: 'item_sea_ty', onHand: 96 },
+  { id: 'bal_ctn_ty', customerId: 'cus_guiltfree', itemId: 'item_ctn_ty', onHand: 360 },
+  { id: 'bal_lam_rel', customerId: 'cus_reliance', itemId: 'item_lam_rel', onHand: 210 },
+  { id: 'bal_sea_rel', customerId: 'cus_reliance', itemId: 'item_sea_rel', onHand: 54 },
+  { id: 'bal_ctn_rel', customerId: 'cus_reliance', itemId: 'item_ctn_rel', onHand: 175 },
 ]
 
 export const seedOrders = [

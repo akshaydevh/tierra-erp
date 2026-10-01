@@ -38,6 +38,8 @@ Preview password for every account: `tierra-dev`
 
 Banana chips 80g is seeded at 40 pouches on hand with an open order for 100, so available stock is −60. A WhatsApp PDF that asks for that item is refused.
 
+The inventory page is customer material stock. Each seeded customer holds their own laminate, seasoning, and cartons.
+
 ## WhatsApp
 
 Evolution is optional for the pages above. To link a phone:

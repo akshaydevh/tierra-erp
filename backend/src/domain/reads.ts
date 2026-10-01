@@ -1,16 +1,13 @@
-import { availableQuantity, shortLineCount } from '../domain/inventory'
+import {
+  availableQuantity,
+  CustomerInventory,
+  shortLineCount,
+  type CustomerMaterialRow,
+} from '../domain/inventory'
 import type { Store } from '../db/store'
 import type { OrderLineRecord, OrderRecord, WhatsappConnection } from '../db/types'
 
-export type InventoryRow = {
-  itemId: string
-  sku: string
-  name: string
-  unit: string
-  onHand: number
-  reserved: number
-  available: number
-}
+export type InventoryRow = CustomerMaterialRow
 
 export type OrderListItem = OrderRecord & { lineCount: number }
 
@@ -27,7 +24,7 @@ export type CommandCentre = {
 }
 
 export function availabilityMap(
-  balances: Array<{ itemId: string; onHand: number }>,
+  balances: Array<{ itemId: string; onHand: number; customerId?: string | null }>,
   lines: OrderLineRecord[],
   orders: OrderRecord[],
 ): Map<string, number> {
@@ -39,35 +36,19 @@ export function availabilityMap(
   }
   const available = new Map<string, number>()
   for (const balance of balances) {
+    if (balance.customerId) continue
     available.set(balance.itemId, availableQuantity(balance.onHand, reserved.get(balance.itemId) ?? 0))
   }
   return available
 }
 
 export async function inventoryRows(store: Store): Promise<InventoryRow[]> {
-  const [items, balances, lines, orders] = await Promise.all([
+  const [items, balances, customers] = await Promise.all([
     store.listItems(),
     store.listBalances(),
-    store.listOrderLines(),
-    store.listOrders(),
+    store.listCustomers(),
   ])
-  const available = availabilityMap(balances, lines, orders)
-  const status = new Map(orders.map((order) => [order.id, order.status]))
-  return items.map((item) => {
-    const onHand = balances.find((row) => row.itemId === item.id)?.onHand ?? 0
-    const reserved = lines
-      .filter((line) => line.itemId === item.id && status.get(line.orderId) === 'open')
-      .reduce((sum, line) => sum + line.quantity, 0)
-    return {
-      itemId: item.id,
-      sku: item.sku,
-      name: item.name,
-      unit: item.unit,
-      onHand,
-      reserved,
-      available: available.get(item.id) ?? availableQuantity(onHand, reserved),
-    }
-  })
+  return CustomerInventory.from(items, balances, customers).rows
 }
 
 export async function orderList(store: Store): Promise<OrderListItem[]> {

@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { StockShortError } from '../domain/inventory'
 import { availableQuantity } from '../domain/inventory'
-import { seedBalances, seedCustomers, seedItems, seedOrders, seedUsers } from './seed-data'
+import { seedBalances, seedCustomers, seedItems, seedMaterialItems, seedOrders, seedUsers } from './seed-data'
 import type { RecentMessage, Store } from './store'
 import type {
   AccountLink,
@@ -50,7 +50,7 @@ export class MemoryStore implements Store {
   constructor(passwordHash: string) {
     this.users = seedUsers.map((user) => ({ ...user, passwordHash, role: user.role satisfies Role }))
     this.customers = seedCustomers.map((row) => ({ ...row }))
-    this.items = seedItems.map((row) => ({ ...row }))
+    this.items = [...seedItems, ...seedMaterialItems].map((row) => ({ ...row }))
     this.balances = seedBalances.map((row) => ({ ...row }))
     this.orders = []
     this.lines = []
@@ -197,7 +197,7 @@ export class MemoryStore implements Store {
   }): Promise<{ id: string }> {
     const shortages = []
     for (const line of input.lines) {
-      const balance = this.balances.find((row) => row.itemId === line.itemId)
+      const balance = this.balances.find((row) => row.itemId === line.itemId && row.customerId == null)
       const reserved = this.lines
         .filter((row) => row.itemId === line.itemId)
         .filter((row) => this.orders.find((order) => order.id === row.orderId)?.status === 'open')

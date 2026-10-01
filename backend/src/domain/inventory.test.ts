@@ -1,7 +1,27 @@
 import { describe, expect, it } from 'vitest'
-import { availableQuantity, shortLineCount } from './inventory'
+import { availableQuantity, CustomerInventory, shortLineCount } from './inventory'
 import { decideIntake, matchCustomer } from './intake'
-import { seedCustomers, seedItems } from '../db/seed-data'
+import { seedBalances, seedCustomers, seedItems, seedMaterialItems } from '../db/seed-data'
+
+describe('customer material stock', () => {
+  const inventory = CustomerInventory.from(
+    [...seedItems, ...seedMaterialItems],
+    seedBalances,
+    seedCustomers,
+  )
+
+  it('keeps laminate, seasoning, and cartons on the customer that owns them', () => {
+    expect(inventory.forCustomer('cus_beyond').map((row) => row.kind)).toEqual([
+      'laminate',
+      'seasoning',
+      'carton',
+    ])
+    expect(inventory.onHand('cus_beyond', 'laminate')).toBe(860)
+    expect(inventory.onHand('cus_guiltfree', 'seasoning')).toBe(96)
+    expect(inventory.onHand('cus_reliance', 'carton')).toBe(175)
+    expect(inventory.rows.some((row) => row.sku === 'BAN-80G')).toBe(false)
+  })
+})
 
 describe('inventory math', () => {
   it('subtracts open-order reservations from on-hand stock', () => {

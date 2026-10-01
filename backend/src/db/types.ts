@@ -32,14 +32,26 @@ export type Customer = {
   code: string
 }
 
+export type ItemKind = 'finished_good' | 'laminate' | 'seasoning' | 'carton'
+
+export function asItemKind(value: string): ItemKind {
+  if (value === 'finished_good' || value === 'laminate' || value === 'seasoning' || value === 'carton') {
+    return value
+  }
+  throw new Error(`Unknown item kind ${value}`)
+}
+
 export type Item = {
   id: string
   sku: string
   name: string
   unit: string
+  kind: ItemKind
 }
 
 export type Balance = {
+  id: string
+  customerId: string | null
   itemId: string
   onHand: number
 }

@@ -33,14 +33,18 @@ export type OrderDetail = OrderListItem & {
   hasDocument: boolean
 }
 
+export type MaterialKind = 'laminate' | 'seasoning' | 'carton'
+
 export type InventoryItem = {
+  customerId: string
+  customerName: string
+  customerCode: string
   itemId: string
   sku: string
   name: string
   unit: string
+  kind: MaterialKind
   onHand: number
-  reserved: number
-  available: number
 }
 
 export type AccountLink = {
