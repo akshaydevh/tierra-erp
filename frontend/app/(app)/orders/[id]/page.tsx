@@ -45,6 +45,20 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
             </tbody>
           </table>
         </div>
+        {order.production ? (
+          <p>
+            Production entry {order.production.id}: {order.production.finishedGoodsKg} kg of chips needs{' '}
+            {order.production.bananaKg} kg of banana ({order.production.kgBananaPerKgChips} kg banana per kg,{' '}
+            {order.production.sourceMonths}). <Link href="/production">Production</Link>
+          </p>
+        ) : null}
+        {order.procurement ? (
+          <p>
+            Procurement order {order.procurement.id} for {order.procurement.quantityKg} {order.procurement.unit} of{' '}
+            {order.procurement.itemName} is assigned to {order.procurement.assigneeName}.{' '}
+            <Link href="/procurement">Procurement</Link>
+          </p>
+        ) : null}
         {order.hasDocument ? (
           <p>
             <a className="btn-sec" href={`/api/orders/${order.id}/document`} target="_blank" rel="noreferrer">
@@ -72,9 +86,11 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
               <div>
                 <b>Stock checked</b>
                 <div className="stamp">
-                  {order.source === 'whatsapp'
-                    ? 'Created only because available stock covered every line'
-                    : 'Seeded with the preview balances'}
+                  {order.procurement
+                    ? `Banana procurement assigned to ${order.procurement.assigneeName}`
+                    : order.source === 'whatsapp'
+                      ? 'Accepted from the purchase-order PDF'
+                      : 'Seeded with the preview balances'}
                 </div>
               </div>
             </li>

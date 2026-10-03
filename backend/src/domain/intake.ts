@@ -36,7 +36,6 @@ export type Shortage = {
 export type IntakeDecision =
   | { kind: 'no_inventory'; customerName: string }
   | { kind: 'unmatched_lines'; descriptions: string[] }
-  | { kind: 'short'; poNumber: string; shortages: Shortage[] }
   | {
       kind: 'ok'
       customerId: string
@@ -129,20 +128,6 @@ export function decideIntake(
   }
   if (unmatched.length > 0) return { kind: 'unmatched_lines', descriptions: unmatched }
 
-  const shortages: Shortage[] = []
-  for (const line of grouped.values()) {
-    const available = availableByItem.get(line.itemId) ?? 0
-    if (line.quantity > available) {
-      shortages.push({
-        sku: line.sku,
-        name: line.name,
-        requested: line.quantity,
-        available,
-      })
-    }
-  }
-  if (shortages.length > 0) return { kind: 'short', poNumber: po.poNumber, shortages }
-
   return {
     kind: 'ok',
     customerId: customer.id,
@@ -170,6 +155,28 @@ export function shortReply(poNumber: string, shortages: Shortage[]): string {
   return `Not enough stock to fulfil PO ${poNumber}.\n${lines}\nNo order was created.`
 }
 
-export function createdReply(orderId: string, poNumber: string): string {
-  return `Created order ${orderId} for PO ${poNumber}.`
+function formatKg(value: number): string {
+  const [whole, fraction] = value.toFixed(3).split('.')
+  const grouped = (whole ?? '0').replace(/\B(?=(\d{3})+(?!\d))/g, ',')
+  return `${grouped}.${fraction}`
+}
+
+export function createdReply(input: {
+  orderId: string
+  poNumber: string
+  finishedGoodsKg: number
+  bananaKg: number
+  procurementOrderId: string | null
+  skipped: string[]
+}): string {
+  const lines = [`Created order ${input.orderId} for PO ${input.poNumber}.`]
+  if (input.bananaKg > 0 && input.procurementOrderId) {
+    lines.push(`Finished goods ${formatKg(input.finishedGoodsKg)} kg.`)
+    lines.push(`Banana required ${formatKg(input.bananaKg)} kg.`)
+    lines.push(`Procurement order ${input.procurementOrderId} is assigned to Joshy.`)
+  }
+  if (input.skipped.length > 0) {
+    lines.push(`Left out of the banana calculation: ${input.skipped.join(', ')}.`)
+  }
+  return lines.join('\n')
 }

@@ -69,7 +69,7 @@ describe('purchase order intake', () => {
   it('refuses a buyer who has no material inventory', () => {
     const missing = decideIntake(
       {
-        customerName: 'Trent Hypermarket Private Limited',
+        customerName: 'Acme Grocers',
         poNumber: '5901346472',
         poDate: '2026-06-05',
         lines: [
@@ -83,7 +83,7 @@ describe('purchase order intake', () => {
     )
     expect(missing.kind).toBe('no_inventory')
     if (missing.kind === 'no_inventory') {
-      expect(noInventoryReply(missing.customerName)).toContain('Trent Hypermarket Private Limited')
+      expect(noInventoryReply(missing.customerName)).toContain('Acme Grocers')
       expect(noInventoryReply(missing.customerName)).toContain('No order was created')
     }
 
@@ -104,7 +104,7 @@ describe('purchase order intake', () => {
     expect(empty.kind).toBe('no_inventory')
   })
 
-  it('refuses a short line and keeps a covered line', () => {
+  it('accepts a line even when finished-goods stock is short', () => {
     const short = decideIntake(
       {
         customerName: 'Beyond Snack',
@@ -119,7 +119,7 @@ describe('purchase order intake', () => {
       available,
       inventory,
     )
-    expect(short.kind).toBe('short')
+    expect(short.kind).toBe('ok')
 
     const ok = decideIntake(
       {

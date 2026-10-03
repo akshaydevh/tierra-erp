@@ -1,9 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { and, desc, eq, gt, inArray } from 'drizzle-orm'
 import type { PostgresJsDatabase } from 'drizzle-orm/postgres-js'
-import { availableQuantity, StockShortError } from '../domain/inventory'
 import * as schema from './schema'
-import { availabilitySql } from './schema'
 import type { RecentMessage, Store } from './store'
 import type {
   AccountLink,
@@ -13,6 +11,8 @@ import type {
   Item,
   OrderLineRecord,
   OrderRecord,
+  ProcurementOrderRecord,
+  ProductionEntryRecord,
   PublicUser,
   Role,
   StoredDocument,
@@ -26,19 +26,6 @@ type Database = PostgresJsDatabase<typeof schema>
 
 function newId(prefix: string): string {
   return `${prefix}_${randomUUID().replace(/-/g, '').slice(0, 12)}`
-}
-
-function rowsOf<T>(result: unknown): T[] {
-  if (Array.isArray(result)) return result as T[]
-  if (result && typeof result === 'object' && 'rows' in result) {
-    const rows = (result as { rows: unknown }).rows
-    if (Array.isArray(rows)) return rows as T[]
-  }
-  return []
-}
-
-function asNumber(value: unknown): number {
-  return typeof value === 'number' ? value : Number(value)
 }
 
 const defaultConnection = (): WhatsappConnection => ({
@@ -308,34 +295,65 @@ export class DrizzleStore implements Store {
     return id
   }
 
+  async listProductionEntries(): Promise<ProductionEntryRecord[]> {
+    const rows = await this.db
+      .select({
+        id: schema.productionEntries.id,
+        orderId: schema.productionEntries.orderId,
+        poNumber: schema.orders.poNumber,
+        customerName: schema.customers.name,
+        finishedGoodsKg: schema.productionEntries.finishedGoodsKg,
+        kgBananaPerKgChips: schema.productionEntries.kgBananaPerKgChips,
+        bananaKg: schema.productionEntries.bananaKg,
+        sourceMonths: schema.productionEntries.sourceMonths,
+        createdAt: schema.productionEntries.createdAt,
+      })
+      .from(schema.productionEntries)
+      .innerJoin(schema.orders, eq(schema.orders.id, schema.productionEntries.orderId))
+      .innerJoin(schema.customers, eq(schema.customers.id, schema.orders.customerId))
+      .orderBy(desc(schema.productionEntries.createdAt))
+    return rows.map((row) => ({
+      ...row,
+      createdAt: row.createdAt.toISOString(),
+    }))
+  }
+
+  async listProcurementOrders(): Promise<ProcurementOrderRecord[]> {
+    const rows = await this.db
+      .select({
+        id: schema.procurementOrders.id,
+        orderId: schema.procurementOrders.orderId,
+        poNumber: schema.orders.poNumber,
+        customerName: schema.customers.name,
+        productionEntryId: schema.procurementOrders.productionEntryId,
+        itemName: schema.items.name,
+        quantityKg: schema.procurementOrders.quantityKg,
+        unit: schema.procurementOrders.unit,
+        assigneeId: schema.procurementOrders.assigneeId,
+        assigneeName: schema.users.name,
+        createdAt: schema.procurementOrders.createdAt,
+      })
+      .from(schema.procurementOrders)
+      .innerJoin(schema.orders, eq(schema.orders.id, schema.procurementOrders.orderId))
+      .innerJoin(schema.customers, eq(schema.customers.id, schema.orders.customerId))
+      .innerJoin(schema.items, eq(schema.items.id, schema.procurementOrders.itemId))
+      .innerJoin(schema.users, eq(schema.users.id, schema.procurementOrders.assigneeId))
+      .orderBy(desc(schema.procurementOrders.createdAt))
+    return rows.map((row) => ({
+      ...row,
+      createdAt: row.createdAt.toISOString(),
+    }))
+  }
+
   async createOrder(input: {
     customerId: string
     poNumber: string
     poDate: string | null
     lines: import('./types').NewOrderLine[]
     document: StoredDocument & { messageId: string }
-  }): Promise<{ id: string }> {
+    production: import('./types').ProductionPlan | null
+  }): Promise<{ id: string; productionEntryId: string | null; procurementOrderId: string | null }> {
     return this.db.transaction(async (tx) => {
-      const stock = rowsOf<{ item_id: string; on_hand: number; reserved: number }>(
-        await tx.execute(availabilitySql),
-      )
-      const items = await tx.select().from(schema.items)
-      const shortages = []
-      for (const line of input.lines) {
-        const row = stock.find((entry) => entry.item_id === line.itemId)
-        const available = availableQuantity(asNumber(row?.on_hand ?? 0), asNumber(row?.reserved ?? 0))
-        if (line.quantity > available) {
-          const item = items.find((entry) => entry.id === line.itemId)
-          shortages.push({
-            sku: item?.sku ?? line.itemId,
-            name: item?.name ?? line.description,
-            requested: line.quantity,
-            available,
-          })
-        }
-      }
-      if (shortages.length > 0) throw new StockShortError(shortages)
-
       const id = newId('ord')
       await tx.insert(schema.orders).values({
         id,
@@ -364,7 +382,27 @@ export class DrizzleStore implements Store {
         mimeType: input.document.mimeType,
         content: input.document.content,
       })
-      return { id }
+      if (!input.production) return { id, productionEntryId: null, procurementOrderId: null }
+      const productionEntryId = newId('prd')
+      const procurementOrderId = newId('prc')
+      await tx.insert(schema.productionEntries).values({
+        id: productionEntryId,
+        orderId: id,
+        finishedGoodsKg: input.production.finishedGoodsKg,
+        kgBananaPerKgChips: input.production.kgBananaPerKgChips,
+        bananaKg: input.production.bananaKg,
+        sourceMonths: input.production.sourceMonths,
+      })
+      await tx.insert(schema.procurementOrders).values({
+        id: procurementOrderId,
+        orderId: id,
+        productionEntryId,
+        itemId: input.production.rawItemId,
+        quantityKg: input.production.bananaKg,
+        unit: 'kg',
+        assigneeId: input.production.assigneeId,
+      })
+      return { id, productionEntryId, procurementOrderId }
     })
   }
 }

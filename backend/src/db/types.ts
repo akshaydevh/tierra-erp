@@ -32,10 +32,16 @@ export type Customer = {
   code: string
 }
 
-export type ItemKind = 'finished_good' | 'laminate' | 'seasoning' | 'carton'
+export type ItemKind = 'finished_good' | 'laminate' | 'seasoning' | 'carton' | 'raw_material'
 
 export function asItemKind(value: string): ItemKind {
-  if (value === 'finished_good' || value === 'laminate' || value === 'seasoning' || value === 'carton') {
+  if (
+    value === 'finished_good' ||
+    value === 'laminate' ||
+    value === 'seasoning' ||
+    value === 'carton' ||
+    value === 'raw_material'
+  ) {
     return value
   }
   throw new Error(`Unknown item kind ${value}`)
@@ -100,6 +106,41 @@ export type NewOrderLine = {
   quantity: number
   unit: string
   unitPrice: string | null
+}
+
+export type ProductionPlan = {
+  finishedGoodsKg: string
+  kgBananaPerKgChips: string
+  bananaKg: string
+  sourceMonths: string
+  rawItemId: string
+  assigneeId: string
+}
+
+export type ProductionEntryRecord = {
+  id: string
+  orderId: string
+  poNumber: string
+  customerName: string
+  finishedGoodsKg: string
+  kgBananaPerKgChips: string
+  bananaKg: string
+  sourceMonths: string
+  createdAt: string
+}
+
+export type ProcurementOrderRecord = {
+  id: string
+  orderId: string
+  poNumber: string
+  customerName: string
+  productionEntryId: string
+  itemName: string
+  quantityKg: string
+  unit: string
+  assigneeId: string
+  assigneeName: string
+  createdAt: string
 }
 
 export type StoredDocument = {

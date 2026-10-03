@@ -8,6 +8,7 @@ import {
   seedItems,
   seedMaterialItems,
   seedOrders,
+  seedUnits,
   seedUsers,
 } from './seed-data'
 
@@ -58,10 +59,18 @@ export async function seedIfEmpty(db: Database): Promise<void> {
   })
 }
 
+export async function seedUnitsOfMeasure(db: Database): Promise<void> {
+  await db.insert(schema.units).values(seedUnits).onConflictDoNothing({ target: schema.units.code })
+}
+
 export async function seedCustomerMaterials(db: Database): Promise<void> {
-  await db.insert(schema.items).values(seedMaterialItems).onConflictDoNothing({ target: schema.items.id })
+  await db.insert(schema.customers).values(seedCustomers).onConflictDoNothing({ target: schema.customers.id })
+  await db
+    .insert(schema.items)
+    .values([...seedItems, ...seedMaterialItems])
+    .onConflictDoNothing({ target: schema.items.id })
   await db
     .insert(schema.inventoryBalances)
-    .values(seedBalances.filter((row) => row.customerId))
+    .values(seedBalances)
     .onConflictDoNothing({ target: schema.inventoryBalances.id })
 }

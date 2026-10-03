@@ -1,6 +1,8 @@
 import type { Customer, Item } from './types'
 
 export const DEV_PASSWORD = 'tierra-dev'
+export const PROCUREMENT_ASSIGNEE_ID = 'usr_joshy'
+export const RAW_BANANA_ITEM_ID = 'item_rm_banana'
 
 export const seedUsers = [
   {
@@ -23,16 +25,52 @@ export const seedUsers = [
   },
 ]
 
+export const seedUnits = [
+  {
+    code: 'EA',
+    name: 'Each',
+    description: 'One sellable pack. Base quantity on Reliance purchase orders.',
+  },
+  {
+    code: 'CRT',
+    name: 'Carton',
+    description:
+      'Reliance carton. Pieces per carton depend on the item. On PO 5115244945, 1 CRT of 100g chips was 56 each.',
+  },
+  {
+    code: 'C01',
+    name: 'Carton',
+    description:
+      'Reliance alternate carton code. Pieces per carton depend on the item. On PO 5115244945, 1 C01 of 500g chips was 30 each.',
+  },
+]
+
 export const seedCustomers: Customer[] = [
   { id: 'cus_beyond', name: 'Beyond Snack', code: 'BEYOND' },
   { id: 'cus_guiltfree', name: 'Guiltfree', code: 'GUILT' },
   { id: 'cus_reliance', name: 'Reliance Retail', code: 'REL' },
+  { id: 'cus_trent', name: 'Trent Hypermarket Private Limited', code: 'TRENT' },
 ]
 
 export const seedItems: Item[] = [
   { id: 'item_ban40', sku: 'BAN-40G', name: 'Banana chips 40g', unit: 'pouch', kind: 'finished_good' },
   { id: 'item_ban80', sku: 'BAN-80G', name: 'Banana chips 80g', unit: 'pouch', kind: 'finished_good' },
   { id: 'item_cas50', sku: 'CAS-50G', name: 'Cassava chips 50g', unit: 'pouch', kind: 'finished_good' },
+  {
+    id: 'item_fab170',
+    sku: 'FAB-170G',
+    name: 'Fabsta Banana chips Salted 170g',
+    unit: 'pouch',
+    kind: 'finished_good',
+  },
+  {
+    id: 'item_fab500',
+    sku: 'FAB-500G',
+    name: 'Fabsta Banana Chips 500g',
+    unit: 'pouch',
+    kind: 'finished_good',
+  },
+  { id: RAW_BANANA_ITEM_ID, sku: 'RM-BANANA', name: 'Raw banana', unit: 'kg', kind: 'raw_material' },
 ]
 
 export const seedMaterialItems: Item[] = [
@@ -99,6 +137,27 @@ export const seedMaterialItems: Item[] = [
     unit: 'carton',
     kind: 'carton',
   },
+  {
+    id: 'item_lam_fab',
+    sku: 'PMPL-FAB-170',
+    name: 'Pouch film, Fabsta 170g',
+    unit: 'kg',
+    kind: 'laminate',
+  },
+  {
+    id: 'item_sea_fab',
+    sku: 'FLV-FAB-SALT',
+    name: 'Fabsta salted seasoning',
+    unit: 'kg',
+    kind: 'seasoning',
+  },
+  {
+    id: 'item_ctn_fab',
+    sku: 'CTN-FAB-170',
+    name: 'Shipper, Fabsta 170g',
+    unit: 'carton',
+    kind: 'carton',
+  },
 ]
 
 export const seedBalances = [
@@ -114,6 +173,11 @@ export const seedBalances = [
   { id: 'bal_lam_rel', customerId: 'cus_reliance', itemId: 'item_lam_rel', onHand: 210 },
   { id: 'bal_sea_rel', customerId: 'cus_reliance', itemId: 'item_sea_rel', onHand: 54 },
   { id: 'bal_ctn_rel', customerId: 'cus_reliance', itemId: 'item_ctn_rel', onHand: 175 },
+  { id: 'bal_lam_fab', customerId: 'cus_trent', itemId: 'item_lam_fab', onHand: 420 },
+  { id: 'bal_sea_fab', customerId: 'cus_trent', itemId: 'item_sea_fab', onHand: 80 },
+  { id: 'bal_ctn_fab', customerId: 'cus_trent', itemId: 'item_ctn_fab', onHand: 90 },
+  { id: 'bal_fab170', customerId: null, itemId: 'item_fab170', onHand: 0 },
+  { id: 'bal_fab500', customerId: null, itemId: 'item_fab500', onHand: 0 },
 ]
 
 export const seedOrders = [

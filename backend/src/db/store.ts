@@ -8,6 +8,9 @@ import type {
   OrderLineRecord,
   OrderRecord,
   AccountLink,
+  ProcurementOrderRecord,
+  ProductionEntryRecord,
+  ProductionPlan,
   PublicUser,
   StoredDocument,
   User,
@@ -37,6 +40,8 @@ export interface Store {
   listBalances(): Promise<Balance[]>
   listOrders(): Promise<OrderRecord[]>
   listOrderLines(): Promise<OrderLineRecord[]>
+  listProductionEntries(): Promise<ProductionEntryRecord[]>
+  listProcurementOrders(): Promise<ProcurementOrderRecord[]>
   orderHasDocument(orderId: string): Promise<boolean>
   getOrderDocument(orderId: string): Promise<StoredDocument | null>
 
@@ -57,5 +62,6 @@ export interface Store {
     poDate: string | null
     lines: NewOrderLine[]
     document: StoredDocument & { messageId: string }
-  }): Promise<{ id: string }>
+    production: ProductionPlan | null
+  }): Promise<{ id: string; productionEntryId: string | null; procurementOrderId: string | null }>
 }

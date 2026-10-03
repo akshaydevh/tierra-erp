@@ -28,9 +28,36 @@ export type OrderLine = {
   unitPrice: string | null
 }
 
+export type ProductionEntry = {
+  id: string
+  orderId: string
+  poNumber: string
+  customerName: string
+  finishedGoodsKg: string
+  kgBananaPerKgChips: string
+  bananaKg: string
+  sourceMonths: string
+  createdAt: string
+}
+
+export type ProcurementOrder = {
+  id: string
+  orderId: string
+  poNumber: string
+  customerName: string
+  productionEntryId: string
+  itemName: string
+  quantityKg: string
+  unit: string
+  assigneeName: string
+  createdAt: string
+}
+
 export type OrderDetail = OrderListItem & {
   lines: OrderLine[]
   hasDocument: boolean
+  production: ProductionEntry | null
+  procurement: ProcurementOrder | null
 }
 
 export type MaterialKind = 'laminate' | 'seasoning' | 'carton'

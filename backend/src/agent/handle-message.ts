@@ -1,3 +1,4 @@
+import { bananaRequirement } from '../domain/banana'
 import { availabilityMap, dashboardSnapshot } from '../domain/reads'
 import {
   createdReply,
@@ -7,6 +8,7 @@ import {
   shortReply,
   type ExtractedPo,
 } from '../domain/intake'
+import { PROCUREMENT_ASSIGNEE_ID, RAW_BANANA_ITEM_ID } from '../db/seed-data'
 import { CustomerInventory, StockShortError } from '../domain/inventory'
 import type { Store } from '../db/store'
 import { ExtractError } from './extract'
@@ -14,6 +16,7 @@ import type { JudgeInput, JudgeResult } from './judge'
 import type { ChatInput, ChatTurn } from './reply'
 import type { EvolutionClient } from '../whatsapp/evolution'
 import { resolvePeople, type Person } from '../whatsapp/people'
+import { phoneDigits } from '../whatsapp/qr'
 import { deliveryAddress, replyChatJid, type ChatKind, type IncomingMessage } from '../whatsapp/parse'
 
 export type AgentDeps = {
@@ -42,10 +45,15 @@ export function ensureTierraPrefix(text: string): string {
   return `${TIERRA_HEADER}\n\n${body}`
 }
 
-async function sendBotText(deps: AgentDeps, message: IncomingMessage, text: string): Promise<void> {
+async function sendBotText(
+  deps: AgentDeps,
+  message: IncomingMessage,
+  text: string,
+  mentionPhones: string[] = [],
+): Promise<void> {
   const remoteJid = replyChatJid(message)
   const body = ensureTierraPrefix(text)
-  const sent = await deps.evolution.sendText(deliveryAddress(remoteJid), body)
+  const sent = await deps.evolution.sendText(deliveryAddress(remoteJid), body, mentionPhones)
   if (!sent.messageId) return
   await deps.store.claimMessage({
     evolutionMessageId: sent.messageId,
@@ -129,11 +137,8 @@ export async function processPersonalPdf(
     await sendBotText(deps, message, withSender(lineFailureReply(decision.descriptions), speaker))
     return
   }
-  if (decision.kind === 'short') {
-    await sendBotText(deps, message, withSender(shortReply(decision.poNumber, decision.shortages), speaker))
-    return
-  }
 
+  const requirement = bananaRequirement(decision.lines)
   try {
     const created = await deps.store.createOrder({
       customerId: decision.customerId,
@@ -146,8 +151,34 @@ export async function processPersonalPdf(
         content,
         messageId: message.id,
       },
+      production:
+        requirement.bananaKg > 0
+          ? {
+              finishedGoodsKg: requirement.finishedGoodsKg.toFixed(3),
+              kgBananaPerKgChips: requirement.kgBananaPerKgChips.toFixed(3),
+              bananaKg: requirement.bananaKg.toFixed(3),
+              sourceMonths: requirement.sourceMonths,
+              rawItemId: RAW_BANANA_ITEM_ID,
+              assigneeId: PROCUREMENT_ASSIGNEE_ID,
+            }
+          : null,
     })
-    await sendBotText(deps, message, withSender(createdReply(created.id, decision.poNumber), speaker))
+    const accounts = await deps.store.listAccountLinks()
+    const joshy = accounts.find((account) => account.id === PROCUREMENT_ASSIGNEE_ID)
+    const mentionPhones = joshy?.phoneNumber ? [phoneDigits(joshy.phoneNumber)] : []
+    const reply = createdReply({
+      orderId: created.id,
+      poNumber: decision.poNumber,
+      finishedGoodsKg: requirement.finishedGoodsKg,
+      bananaKg: requirement.bananaKg,
+      procurementOrderId: created.procurementOrderId,
+      skipped: requirement.skipped,
+    })
+    const mentioned =
+      mentionPhones.length > 0 && created.procurementOrderId
+        ? reply.replace('Joshy', `Joshy @${mentionPhones[0]}`)
+        : reply
+    await sendBotText(deps, message, withSender(mentioned, speaker), mentionPhones)
   } catch (error) {
     if (!(error instanceof StockShortError)) throw error
     await sendBotText(deps, message, withSender(shortReply(decision.poNumber, error.shortages), speaker))

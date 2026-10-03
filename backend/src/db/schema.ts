@@ -56,6 +56,12 @@ export const customers = pgTable('customers', {
   code: text('code').notNull().unique(),
 })
 
+export const units = pgTable('units', {
+  code: text('code').primaryKey(),
+  name: text('name').notNull(),
+  description: text('description').notNull(),
+})
+
 export const items = pgTable(
   'items',
   {
@@ -68,7 +74,7 @@ export const items = pgTable(
   (table) => [
     check(
       'items_kind_check',
-      sql`${table.kind} in ('finished_good', 'laminate', 'seasoning', 'carton')`,
+      sql`${table.kind} in ('finished_good', 'laminate', 'seasoning', 'carton', 'raw_material')`,
     ),
   ],
 )
@@ -124,6 +130,37 @@ export const orderLines = pgTable('order_lines', {
   quantity: integer('quantity').notNull(),
   unit: text('unit').notNull(),
   unitPrice: numeric('unit_price', { precision: 12, scale: 2 }),
+})
+
+export const productionEntries = pgTable('production_entries', {
+  id: text('id').primaryKey(),
+  orderId: text('order_id')
+    .notNull()
+    .references(() => orders.id, { onDelete: 'cascade' }),
+  finishedGoodsKg: numeric('finished_goods_kg', { precision: 14, scale: 3 }).notNull(),
+  kgBananaPerKgChips: numeric('kg_banana_per_kg_chips', { precision: 8, scale: 3 }).notNull(),
+  bananaKg: numeric('banana_kg', { precision: 14, scale: 3 }).notNull(),
+  sourceMonths: text('source_months').notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+})
+
+export const procurementOrders = pgTable('procurement_orders', {
+  id: text('id').primaryKey(),
+  orderId: text('order_id')
+    .notNull()
+    .references(() => orders.id, { onDelete: 'cascade' }),
+  productionEntryId: text('production_entry_id')
+    .notNull()
+    .references(() => productionEntries.id, { onDelete: 'cascade' }),
+  itemId: text('item_id')
+    .notNull()
+    .references(() => items.id),
+  quantityKg: numeric('quantity_kg', { precision: 14, scale: 3 }).notNull(),
+  unit: text('unit').notNull(),
+  assigneeId: text('assignee_id')
+    .notNull()
+    .references(() => users.id),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 })
 
 export const orderDocuments = pgTable('order_documents', {

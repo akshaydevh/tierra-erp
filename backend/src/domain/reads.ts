@@ -5,7 +5,13 @@ import {
   type CustomerMaterialRow,
 } from '../domain/inventory'
 import type { Store } from '../db/store'
-import type { OrderLineRecord, OrderRecord, WhatsappConnection } from '../db/types'
+import type {
+  OrderLineRecord,
+  OrderRecord,
+  ProcurementOrderRecord,
+  ProductionEntryRecord,
+  WhatsappConnection,
+} from '../db/types'
 
 export type InventoryRow = CustomerMaterialRow
 
@@ -14,6 +20,8 @@ export type OrderListItem = OrderRecord & { lineCount: number }
 export type OrderDetail = OrderRecord & {
   lines: OrderLineRecord[]
   hasDocument: boolean
+  production: ProductionEntryRecord | null
+  procurement: ProcurementOrderRecord | null
 }
 
 export type CommandCentre = {
@@ -63,15 +71,24 @@ export async function orderDetail(store: Store, id: string): Promise<OrderDetail
   const orders = await store.listOrders()
   const order = orders.find((row) => row.id === id)
   if (!order) return null
-  const lines = (await store.listOrderLines()).filter((line) => line.orderId === id)
-  return { ...order, lines, hasDocument: await store.orderHasDocument(id) }
+  const [lines, productionEntries, procurementOrders, hasDocument] = await Promise.all([
+    store.listOrderLines(),
+    store.listProductionEntries(),
+    store.listProcurementOrders(),
+    store.orderHasDocument(id),
+  ])
+  return {
+    ...order,
+    lines: lines.filter((line) => line.orderId === id),
+    hasDocument,
+    production: productionEntries.find((entry) => entry.orderId === id) ?? null,
+    procurement: procurementOrders.find((entry) => entry.orderId === id) ?? null,
+  }
 }
 
 export const EMPTY_DASHBOARD_MODULES = [
   'My Day',
   'Approvals',
-  'Production',
-  'Procurement',
   'Dispatch',
   'Payments',
   'Costing',

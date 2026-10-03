@@ -15,7 +15,7 @@ export type SentText = {
 export interface EvolutionClient {
   createInstance(): Promise<{ qrBase64: string | null }>
   deleteInstance(): Promise<void>
-  sendText(number: string, text: string): Promise<SentText>
+  sendText(number: string, text: string, mentionPhones?: string[]): Promise<SentText>
   sendReaction(remoteJid: string, messageId: string, fromMe: boolean, emoji: string): Promise<void>
   downloadMedia(message: unknown): Promise<DownloadedMedia>
   fetchOwnerPhone(): Promise<string | null>
@@ -104,10 +104,11 @@ export class HttpEvolution implements EvolutionClient {
     return { qrBase64: qrFromPayload(created) }
   }
 
-  async sendText(number: string, text: string): Promise<SentText> {
+  async sendText(number: string, text: string, mentionPhones: string[] = []): Promise<SentText> {
+    const mentioned = mentionPhones.filter((phone) => phone.length > 0).map((phone) => `${phone}@s.whatsapp.net`)
     const data = await this.request(`/message/sendText/${INSTANCE_NAME}`, {
       method: 'POST',
-      body: JSON.stringify({ number, text }),
+      body: JSON.stringify(mentioned.length > 0 ? { number, text, mentioned } : { number, text }),
     })
     return { messageId: messageIdFrom(data) }
   }

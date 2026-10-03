@@ -112,6 +112,8 @@ export function createApp(deps: AppDeps) {
     return c.body(new Uint8Array(doc.content))
   })
   app.get('/api/inventory', async (c) => c.json({ items: await inventoryRows(deps.store) }))
+  app.get('/api/production', async (c) => c.json({ entries: await deps.store.listProductionEntries() }))
+  app.get('/api/procurement', async (c) => c.json({ orders: await deps.store.listProcurementOrders() }))
 
   app.get('/api/whatsapp', async (c) => {
     return c.json({ connection: publicConnection(await deps.store.getWhatsapp()) })

@@ -24,8 +24,6 @@ export const navItems: NavItem[] = [
 const placeholders: Record<string, string> = {
   'my-day': 'My Day',
   approvals: 'Approvals',
-  production: 'Production',
-  procurement: 'Procurement',
   dispatch: 'Dispatch',
   payments: 'Payments',
   costing: 'Costing',

@@ -1,6 +1,4 @@
 import { randomUUID } from 'node:crypto'
-import { StockShortError } from '../domain/inventory'
-import { availableQuantity } from '../domain/inventory'
 import { seedBalances, seedCustomers, seedItems, seedMaterialItems, seedOrders, seedUsers } from './seed-data'
 import type { RecentMessage, Store } from './store'
 import type {
@@ -14,6 +12,9 @@ import type {
   OrderRecord,
   OrderSource,
   OrderStatus,
+  ProcurementOrderRecord,
+  ProductionEntryRecord,
+  ProductionPlan,
   PublicUser,
   Role,
   StoredDocument,
@@ -37,6 +38,8 @@ export class MemoryStore implements Store {
   balances: Balance[]
   orders: OrderRecord[]
   lines: OrderLineRecord[]
+  production: ProductionEntryRecord[] = []
+  procurement: ProcurementOrderRecord[] = []
   documents: DocumentRow[] = []
   messages: ClaimedMessage[] = []
   relations: Array<{ userId: string; phoneNumber: string }> = []
@@ -188,33 +191,22 @@ export class MemoryStore implements Store {
     return id
   }
 
+  async listProductionEntries(): Promise<ProductionEntryRecord[]> {
+    return this.production.map((entry) => ({ ...entry }))
+  }
+
+  async listProcurementOrders(): Promise<ProcurementOrderRecord[]> {
+    return this.procurement.map((order) => ({ ...order }))
+  }
+
   async createOrder(input: {
     customerId: string
     poNumber: string
     poDate: string | null
     lines: NewOrderLine[]
     document: StoredDocument & { messageId: string }
-  }): Promise<{ id: string }> {
-    const shortages = []
-    for (const line of input.lines) {
-      const balance = this.balances.find((row) => row.itemId === line.itemId && row.customerId == null)
-      const reserved = this.lines
-        .filter((row) => row.itemId === line.itemId)
-        .filter((row) => this.orders.find((order) => order.id === row.orderId)?.status === 'open')
-        .reduce((sum, row) => sum + row.quantity, 0)
-      const available = availableQuantity(balance?.onHand ?? 0, reserved)
-      if (line.quantity > available) {
-        const item = this.items.find((row) => row.id === line.itemId)
-        shortages.push({
-          sku: item?.sku ?? line.itemId,
-          name: item?.name ?? line.description,
-          requested: line.quantity,
-          available,
-        })
-      }
-    }
-    if (shortages.length > 0) throw new StockShortError(shortages)
-
+    production: ProductionPlan | null
+  }): Promise<{ id: string; productionEntryId: string | null; procurementOrderId: string | null }> {
     const id = newId('ord')
     const customer = this.customers.find((row) => row.id === input.customerId)
     const createdAt = new Date().toISOString()
@@ -248,6 +240,35 @@ export class MemoryStore implements Store {
       orderId: id,
       messageId: input.document.messageId,
     })
-    return { id }
+    if (!input.production) return { id, productionEntryId: null, procurementOrderId: null }
+    const productionEntryId = newId('prd')
+    const procurementOrderId = newId('prc')
+    const item = this.items.find((row) => row.id === input.production?.rawItemId)
+    const assignee = this.users.find((row) => row.id === input.production?.assigneeId)
+    this.production.push({
+      id: productionEntryId,
+      orderId: id,
+      poNumber: input.poNumber,
+      customerName: customer?.name ?? '',
+      finishedGoodsKg: input.production.finishedGoodsKg,
+      kgBananaPerKgChips: input.production.kgBananaPerKgChips,
+      bananaKg: input.production.bananaKg,
+      sourceMonths: input.production.sourceMonths,
+      createdAt,
+    })
+    this.procurement.push({
+      id: procurementOrderId,
+      orderId: id,
+      poNumber: input.poNumber,
+      customerName: customer?.name ?? '',
+      productionEntryId,
+      itemName: item?.name ?? 'Raw banana',
+      quantityKg: input.production.bananaKg,
+      unit: 'kg',
+      assigneeId: input.production.assigneeId,
+      assigneeName: assignee?.name ?? 'Joshy',
+      createdAt,
+    })
+    return { id, productionEntryId, procurementOrderId }
   }
 }

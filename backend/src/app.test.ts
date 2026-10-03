@@ -318,7 +318,7 @@ describe('whatsapp purchase orders', () => {
     expect(document.headers.get('content-type')).toBe('application/pdf')
   })
 
-  it('does not create an order when stock is short', async () => {
+  it('creates a banana procurement order when finished-goods stock is short', async () => {
     ctx.setExtracted({
       customerName: 'Beyond Snack',
       poNumber: 'PO-SHORT',
@@ -335,16 +335,18 @@ describe('whatsapp purchase orders', () => {
     })
     const response = await post(pdfBody('m-short'))
     expect(response.status).toBe(200)
-    expect(ctx.evolution.sent[0]?.text).toContain('requested 200')
-    expect(ctx.evolution.sent[0]?.text).toContain('available -60')
-    expect(ctx.evolution.sent[0]?.text).toContain('No order was created')
-    expect(ctx.store.orders.some((order) => order.poNumber === 'PO-SHORT')).toBe(false)
-    expect(ctx.store.documents).toHaveLength(0)
+    expect(ctx.evolution.sent[0]?.text).toContain('Created order')
+    expect(ctx.evolution.sent[0]?.text).toContain('Banana required')
+    expect(ctx.evolution.sent[0]?.text).toContain('assigned to Joshy')
+    expect(ctx.store.orders.some((order) => order.poNumber === 'PO-SHORT')).toBe(true)
+    expect(ctx.store.procurement.some((order) => order.poNumber === 'PO-SHORT' && order.assigneeName === 'Joshy')).toBe(
+      true,
+    )
   })
 
   it('tells WhatsApp when the buyer has no inventory', async () => {
     ctx.setExtracted({
-      customerName: 'Trent Hypermarket Private Limited',
+      customerName: 'Acme Grocers',
       poNumber: '5901346472',
       poDate: '2026-06-05',
       lines: [
@@ -357,12 +359,46 @@ describe('whatsapp purchase orders', () => {
         },
       ],
     })
-    const response = await post(pdfBody('m-trent'))
+    const response = await post(pdfBody('m-acme'))
     expect(response.status).toBe(200)
-    expect(ctx.evolution.sent[0]?.text).toContain('Trent Hypermarket Private Limited')
+    expect(ctx.evolution.sent[0]?.text).toContain('Acme Grocers')
     expect(ctx.evolution.sent[0]?.text).toContain('no laminate, seasoning, or carton inventory')
     expect(ctx.evolution.sent[0]?.text).toContain('No order was created')
     expect(ctx.store.orders.some((order) => order.poNumber === '5901346472')).toBe(false)
+  })
+
+  it('creates production and a banana procurement order from the Trent purchase order', async () => {
+    await ctx.store.saveRelation({ userId: 'usr_joshy', phoneNumber: '919700000001' })
+    ctx.setExtracted({
+      customerName: 'Trent Hypermarket Private Limited',
+      poNumber: '5901346472',
+      poDate: '2026-06-05',
+      lines: [
+        {
+          description: 'Fabsta Banana chips Salted 170g',
+          quantity: 23220,
+          unit: 'PC',
+          buyerCode: null,
+          price: 52.73,
+        },
+        {
+          description: 'Fabsta Banana Chips 500g',
+          quantity: 2640,
+          unit: 'PC',
+          buyerCode: null,
+          price: 151.84,
+        },
+      ],
+    })
+    const response = await post(pdfBody('m-trent'))
+    expect(response.status).toBe(200)
+    expect(ctx.evolution.sent[0]?.text).toContain('5,267.400 kg')
+    expect(ctx.evolution.sent[0]?.text).toContain('21,413.853 kg')
+    expect(ctx.evolution.sent[0]?.text).toContain('Joshy @919700000001')
+    const entry = ctx.store.production.find((row) => row.poNumber === '5901346472')
+    expect(entry?.finishedGoodsKg).toBe('5267.400')
+    expect(entry?.bananaKg).toBe('21413.853')
+    expect(ctx.store.procurement.find((row) => row.poNumber === '5901346472')?.assigneeName).toBe('Joshy')
   })
 
   it('replies to a personal text and ignores a group PDF', async () => {
