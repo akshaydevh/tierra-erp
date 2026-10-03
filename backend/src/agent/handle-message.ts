@@ -1,13 +1,13 @@
 import { availabilityMap, dashboardSnapshot } from '../domain/reads'
 import {
   createdReply,
-  customerFailureReply,
   decideIntake,
   lineFailureReply,
+  noInventoryReply,
   shortReply,
   type ExtractedPo,
 } from '../domain/intake'
-import { StockShortError } from '../domain/inventory'
+import { CustomerInventory, StockShortError } from '../domain/inventory'
 import type { Store } from '../db/store'
 import { ExtractError } from './extract'
 import type { JudgeInput, JudgeResult } from './judge'
@@ -114,9 +114,15 @@ export async function processPersonalPdf(
     deps.store.listOrderLines(),
     deps.store.listOrders(),
   ])
-  const decision = decideIntake(extracted, customers, items, availabilityMap(balances, lines, orders))
-  if (decision.kind === 'unmatched_customer') {
-    await sendBotText(deps, message, withSender(customerFailureReply(decision.customerName), speaker))
+  const decision = decideIntake(
+    extracted,
+    customers,
+    items,
+    availabilityMap(balances, lines, orders),
+    CustomerInventory.from(items, balances, customers),
+  )
+  if (decision.kind === 'no_inventory') {
+    await sendBotText(deps, message, withSender(noInventoryReply(decision.customerName), speaker))
     return
   }
   if (decision.kind === 'unmatched_lines') {

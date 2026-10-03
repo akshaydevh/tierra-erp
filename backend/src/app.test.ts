@@ -342,6 +342,29 @@ describe('whatsapp purchase orders', () => {
     expect(ctx.store.documents).toHaveLength(0)
   })
 
+  it('tells WhatsApp when the buyer has no inventory', async () => {
+    ctx.setExtracted({
+      customerName: 'Trent Hypermarket Private Limited',
+      poNumber: '5901346472',
+      poDate: '2026-06-05',
+      lines: [
+        {
+          description: 'Fabsta Banana chips Salted 170g',
+          quantity: 23220,
+          unit: 'PC',
+          buyerCode: null,
+          price: 52.73,
+        },
+      ],
+    })
+    const response = await post(pdfBody('m-trent'))
+    expect(response.status).toBe(200)
+    expect(ctx.evolution.sent[0]?.text).toContain('Trent Hypermarket Private Limited')
+    expect(ctx.evolution.sent[0]?.text).toContain('no laminate, seasoning, or carton inventory')
+    expect(ctx.evolution.sent[0]?.text).toContain('No order was created')
+    expect(ctx.store.orders.some((order) => order.poNumber === '5901346472')).toBe(false)
+  })
+
   it('replies to a personal text and ignores a group PDF', async () => {
     const text = await post({
       event: 'messages.upsert',

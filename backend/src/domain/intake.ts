@@ -1,3 +1,4 @@
+import type { CustomerInventory } from './inventory'
 import type { Customer, Item } from '../db/types'
 
 export type ExtractedLine = {
@@ -33,7 +34,7 @@ export type Shortage = {
 }
 
 export type IntakeDecision =
-  | { kind: 'unmatched_customer'; customerName: string }
+  | { kind: 'no_inventory'; customerName: string }
   | { kind: 'unmatched_lines'; descriptions: string[] }
   | { kind: 'short'; poNumber: string; shortages: Shortage[] }
   | {
@@ -56,6 +57,10 @@ function bestInclude<T>(items: T[], label: (item: T) => string, query: string): 
   })
   hits.sort((a, b) => label(b).length - label(a).length)
   return hits[0]
+}
+
+export function isPurchaseOrderText(text: string): boolean {
+  return /\bpurchase\s+order\b/i.test(text)
 }
 
 export function matchCustomer(name: string, customers: Customer[]): Customer | undefined {
@@ -86,9 +91,12 @@ export function decideIntake(
   customers: Customer[],
   items: Item[],
   availableByItem: Map<string, number>,
+  inventory: CustomerInventory,
 ): IntakeDecision {
   const customer = matchCustomer(po.customerName, customers)
-  if (!customer) return { kind: 'unmatched_customer', customerName: po.customerName }
+  if (!customer || inventory.forCustomer(customer.id).length === 0) {
+    return { kind: 'no_inventory', customerName: customer?.name ?? po.customerName }
+  }
 
   const unmatched: string[] = []
   const grouped = new Map<string, MatchedLine>()
@@ -144,8 +152,8 @@ export function decideIntake(
   }
 }
 
-export function customerFailureReply(customerName: string): string {
-  return `Could not match customer "${customerName}" to a master record. No order was created.`
+export function noInventoryReply(customerName: string): string {
+  return `${customerName} has no laminate, seasoning, or carton inventory on file. No order was created.`
 }
 
 export function lineFailureReply(descriptions: string[]): string {

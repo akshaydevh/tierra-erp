@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import type { ExtractedPo } from '../domain/intake'
+import { isPurchaseOrderText, type ExtractedPo } from '../domain/intake'
 
 export class ExtractError extends Error {
   constructor(message: string) {
@@ -82,6 +82,9 @@ export async function extractPurchaseOrder(pdf: Buffer, env: ExtractEnv): Promis
   if (text.length < 20) {
     throw new ExtractError('The PDF had no readable text. No order was created.')
   }
+  if (!isPurchaseOrderText(text)) {
+    throw new ExtractError('This PDF is not a purchase order. No order was created.')
+  }
   const response = await fetch(`${env.openaiBaseUrl.replace(/\/$/, '')}/chat/completions`, {
     method: 'POST',
     headers: {
@@ -95,7 +98,7 @@ export async function extractPurchaseOrder(pdf: Buffer, env: ExtractEnv): Promis
         {
           role: 'system',
           content:
-            'You extract a customer purchase order from PDF text for a snack factory. Return only JSON with keys customerName, poNumber, poDate (YYYY-MM-DD or null), and lines. Each line has description, quantity, unit, buyerCode, and price. quantity is a number. buyerCode, unit, and price may be null. Do not invent lines that are not in the text.',
+            'You extract a customer purchase order from PDF text for a snack factory. customerName is the buyer who issued the purchase order, the company named with the purchase order, not the vendor. Tierra Food India is the vendor and is never the customer. Return only JSON with keys customerName, poNumber, poDate (YYYY-MM-DD or null), and lines. Each line has description, quantity, unit, buyerCode, and price. quantity is a number. buyerCode, unit, and price may be null. Do not invent lines that are not in the text.',
         },
         { role: 'user', content: text.slice(0, 20000) },
       ],

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { availableQuantity, CustomerInventory, shortLineCount } from './inventory'
-import { decideIntake, matchCustomer } from './intake'
+import { decideIntake, isPurchaseOrderText, matchCustomer, noInventoryReply } from './intake'
 import { seedBalances, seedCustomers, seedItems, seedMaterialItems } from '../db/seed-data'
 
 describe('customer material stock', () => {
@@ -53,6 +53,56 @@ describe('purchase order intake', () => {
     ['item_ban80', -60],
     ['item_cas50', 2000],
   ])
+  const inventory = CustomerInventory.from(
+    [...seedItems, ...seedMaterialItems],
+    seedBalances,
+    seedCustomers,
+  )
+
+  it('recognises a purchase order by the words on the page', () => {
+    expect(isPurchaseOrderText('Purchase Order\nTrent Hypermarket Private Limited\nPurchase Order : 5901346472')).toBe(
+      true,
+    )
+    expect(isPurchaseOrderText('Delivery challan for banana chips')).toBe(false)
+  })
+
+  it('refuses a buyer who has no material inventory', () => {
+    const missing = decideIntake(
+      {
+        customerName: 'Trent Hypermarket Private Limited',
+        poNumber: '5901346472',
+        poDate: '2026-06-05',
+        lines: [
+          { description: 'Fabsta Banana chips Salted 170g', quantity: 23220, unit: 'PC', buyerCode: null, price: 52.73 },
+        ],
+      },
+      seedCustomers,
+      [...seedItems, ...seedMaterialItems],
+      available,
+      inventory,
+    )
+    expect(missing.kind).toBe('no_inventory')
+    if (missing.kind === 'no_inventory') {
+      expect(noInventoryReply(missing.customerName)).toContain('Trent Hypermarket Private Limited')
+      expect(noInventoryReply(missing.customerName)).toContain('No order was created')
+    }
+
+    const empty = decideIntake(
+      {
+        customerName: 'Beyond Snack',
+        poNumber: 'PO-1',
+        poDate: null,
+        lines: [
+          { description: 'Banana chips 40g', quantity: 10, unit: 'pouch', buyerCode: 'BAN-40G', price: null },
+        ],
+      },
+      seedCustomers,
+      seedItems,
+      available,
+      CustomerInventory.from(seedItems, [], seedCustomers),
+    )
+    expect(empty.kind).toBe('no_inventory')
+  })
 
   it('refuses a short line and keeps a covered line', () => {
     const short = decideIntake(
@@ -65,8 +115,9 @@ describe('purchase order intake', () => {
         ],
       },
       seedCustomers,
-      seedItems,
+      [...seedItems, ...seedMaterialItems],
       available,
+      inventory,
     )
     expect(short.kind).toBe('short')
 
@@ -80,8 +131,9 @@ describe('purchase order intake', () => {
         ],
       },
       seedCustomers,
-      seedItems,
+      [...seedItems, ...seedMaterialItems],
       available,
+      inventory,
     )
     expect(ok.kind).toBe('ok')
     if (ok.kind === 'ok') {
