@@ -63,14 +63,27 @@ export async function seedUnitsOfMeasure(db: Database): Promise<void> {
   await db.insert(schema.units).values(seedUnits).onConflictDoNothing({ target: schema.units.code })
 }
 
+export function missingBalances<T extends { customerId: string | null; itemId: string }>(
+  wanted: T[],
+  existing: Array<{ customerId: string | null; itemId: string }>,
+): T[] {
+  const owned = new Set(existing.map((row) => `${row.customerId ?? ''}:${row.itemId}`))
+  return wanted.filter((row) => !owned.has(`${row.customerId ?? ''}:${row.itemId}`))
+}
+
 export async function seedCustomerMaterials(db: Database): Promise<void> {
   await db.insert(schema.customers).values(seedCustomers).onConflictDoNothing({ target: schema.customers.id })
   await db
     .insert(schema.items)
     .values([...seedItems, ...seedMaterialItems])
     .onConflictDoNothing({ target: schema.items.id })
-  await db
-    .insert(schema.inventoryBalances)
-    .values(seedBalances)
-    .onConflictDoNothing({ target: schema.inventoryBalances.id })
+  const existing = await db
+    .select({
+      customerId: schema.inventoryBalances.customerId,
+      itemId: schema.inventoryBalances.itemId,
+    })
+    .from(schema.inventoryBalances)
+  const missing = missingBalances(seedBalances, existing)
+  if (missing.length === 0) return
+  await db.insert(schema.inventoryBalances).values(missing).onConflictDoNothing({ target: schema.inventoryBalances.id })
 }
