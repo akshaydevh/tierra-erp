@@ -55,6 +55,8 @@ export const seedCustomers: Customer[] = [
 export const seedItems: Item[] = [
   { id: 'item_ban40', sku: 'BAN-40G', name: 'Banana chips 40g', unit: 'pouch', kind: 'finished_good' },
   { id: 'item_ban80', sku: 'BAN-80G', name: 'Banana chips 80g', unit: 'pouch', kind: 'finished_good' },
+  { id: 'item_ban100', sku: 'BAN-100G', name: 'Banana chips 100g', unit: 'pouch', kind: 'finished_good' },
+  { id: 'item_ban500', sku: 'BAN-500G', name: 'Banana chips 500g', unit: 'pouch', kind: 'finished_good' },
   { id: 'item_cas50', sku: 'CAS-50G', name: 'Cassava chips 50g', unit: 'pouch', kind: 'finished_good' },
   {
     id: 'item_fab170',
@@ -176,6 +178,8 @@ export const seedBalances = [
   { id: 'bal_lam_fab', customerId: 'cus_trent', itemId: 'item_lam_fab', onHand: 420 },
   { id: 'bal_sea_fab', customerId: 'cus_trent', itemId: 'item_sea_fab', onHand: 80 },
   { id: 'bal_ctn_fab', customerId: 'cus_trent', itemId: 'item_ctn_fab', onHand: 90 },
+  { id: 'bal_ban100', customerId: null, itemId: 'item_ban100', onHand: 0 },
+  { id: 'bal_ban500', customerId: null, itemId: 'item_ban500', onHand: 0 },
   { id: 'bal_fab170', customerId: null, itemId: 'item_fab170', onHand: 0 },
   { id: 'bal_fab500', customerId: null, itemId: 'item_fab500', onHand: 0 },
 ]

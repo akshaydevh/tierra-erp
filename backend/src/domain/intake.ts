@@ -1,3 +1,4 @@
+import { gramsFromDescription } from './banana'
 import type { CustomerInventory } from './inventory'
 import type { Customer, Item } from '../db/types'
 
@@ -70,6 +71,43 @@ export function matchCustomer(name: string, customers: Customer[]): Customer | u
   )
 }
 
+const HOUSE_BRANDS = new Set(['tierra'])
+const PACK_NOISE = new Set([
+  'pp',
+  'pouch',
+  'pouches',
+  'packet',
+  'packets',
+  'pkt',
+  'prm',
+  'premium',
+  'kerala',
+  'salted',
+])
+
+function productTokens(text: string): string[] {
+  const withoutWeight = text.replace(/(\d+(?:\.\d+)?)\s*(?:grams|gram|grms|grm|gms|gm|g)\b/gi, ' ')
+  return withoutWeight
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter((token) => token.length > 1 && !HOUSE_BRANDS.has(token) && !PACK_NOISE.has(token))
+    .sort()
+}
+
+function sameTokens(left: string[], right: string[]): boolean {
+  return left.length === right.length && left.every((token, index) => token === right[index])
+}
+
+function matchByPack(description: string, goods: Item[]): Item | undefined {
+  const grams = gramsFromDescription(description)
+  const tokens = productTokens(description)
+  if (grams == null || tokens.length === 0) return undefined
+  const hits = goods.filter(
+    (item) => gramsFromDescription(item.name) === grams && sameTokens(productTokens(item.name), tokens),
+  )
+  return hits.length === 1 ? hits[0] : undefined
+}
+
 export function matchItem(line: ExtractedLine, items: Item[]): Item | undefined {
   const goods = items.filter((item) => item.kind === 'finished_good')
   const code = line.buyerCode ? norm(line.buyerCode) : ''
@@ -81,7 +119,8 @@ export function matchItem(line: ExtractedLine, items: Item[]): Item | undefined 
   return (
     goods.find((item) => norm(item.name) === query || norm(item.sku) === query) ??
     bestInclude(goods, (item) => item.sku, query) ??
-    bestInclude(goods, (item) => item.name, query)
+    bestInclude(goods, (item) => item.name, query) ??
+    matchByPack(line.description, goods)
   )
 }
 

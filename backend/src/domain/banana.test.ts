@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { bananaRequirement, kgBananaPerKgChips } from './banana'
+import { bananaRequirement, gramsFromDescription, kgBananaPerKgChips } from './banana'
 
 describe('banana yield', () => {
   it('weights June and July banana receipts by chips produced', () => {
@@ -18,6 +18,13 @@ describe('banana yield', () => {
     expect(result.bananaKg).toBe(21413.853)
     expect(result.sourceMonths).toBe('June 2026, July 2026')
     expect(result.skipped).toEqual([])
+  })
+
+  it('reads grams written as g, gm, or grm', () => {
+    expect(gramsFromDescription('TIERRA BANANA CHIPS 100 G PP')).toBe(100)
+    expect(gramsFromDescription('TIERRA PRM KERALA BANANA CHIPS 500G PP')).toBe(500)
+    expect(gramsFromDescription('banana chips 100 grm per packet')).toBe(100)
+    expect(gramsFromDescription('banana chip 500 gm per packet')).toBe(500)
   })
 
   it('leaves carton lines and lines without a pack weight out of the total', () => {

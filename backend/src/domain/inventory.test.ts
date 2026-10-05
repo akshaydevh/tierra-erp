@@ -143,6 +143,40 @@ describe('purchase order intake', () => {
     }
   })
 
+  it('reads Tierra as the house brand and matches grams per packet', () => {
+    const decision = decideIntake(
+      {
+        customerName: 'Reliance Retail Limited',
+        poNumber: '5115244945',
+        poDate: '2026-07-16',
+        lines: [
+          {
+            description: 'TIERRA BANANA CHIPS 100 G PP',
+            quantity: 112,
+            unit: 'EA',
+            buyerCode: '491696678',
+            price: null,
+          },
+          {
+            description: 'TIERRA PRM KERALA BANANA CHIPS 500G PP',
+            quantity: 480,
+            unit: 'EA',
+            buyerCode: '491696767',
+            price: null,
+          },
+        ],
+      },
+      seedCustomers,
+      [...seedItems, ...seedMaterialItems],
+      available,
+      inventory,
+    )
+    expect(decision.kind).toBe('ok')
+    if (decision.kind === 'ok') {
+      expect(decision.lines.map((line) => line.sku).sort()).toEqual(['BAN-100G', 'BAN-500G'])
+    }
+  })
+
   it('does not match a one-letter customer name by inclusion', () => {
     expect(matchCustomer('a', seedCustomers)).toBeUndefined()
   })

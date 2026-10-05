@@ -19,8 +19,10 @@ export type BananaRequirement = {
   skipped: string[]
 }
 
+const GRAMS = /(\d+(?:\.\d+)?)\s*(?:grams|gram|grms|grm|gms|gm|g)\b/i
+
 export function gramsFromDescription(description: string): number | null {
-  const match = /(\d+(?:\.\d+)?)\s*g\b/i.exec(description)
+  const match = GRAMS.exec(description)
   if (!match) return null
   const grams = Number(match[1])
   return grams > 0 ? grams : null
