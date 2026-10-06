@@ -38,6 +38,9 @@ export function Shell({
 
   return (
     <div className="app">
+      <a className="skip" href="#content">
+        Skip to content
+      </a>
       <aside className="side">
         <div className="brand">
           <Logo variant="mark" />
@@ -83,7 +86,9 @@ export function Shell({
             <div className="av">{initials(user.name)}</div>
           </div>
         </header>
-        <div className="page">{children}</div>
+        <main className="page" id="content">
+          {children}
+        </main>
       </div>
     </div>
   )
