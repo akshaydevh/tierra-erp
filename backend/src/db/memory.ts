@@ -12,6 +12,7 @@ import type {
   OrderRecord,
   OrderSource,
   OrderStatus,
+  PendingConfirmation,
   ProcurementOrderRecord,
   ProductionEntryRecord,
   ProductionPlan,
@@ -25,6 +26,18 @@ import { toPublicUser } from './types'
 
 type SessionRow = { tokenHash: string; userId: string; expiresAt: Date }
 type DocumentRow = StoredDocument & { id: string; orderId: string | null; messageId: string | null }
+type StoredProcurement = ProcurementOrderRecord & { pendingOrderId: string | null }
+type PendingRow = {
+  id: string
+  customerId: string
+  poNumber: string
+  poDate: string | null
+  remoteJid: string
+  documentId: string
+  status: 'awaiting_admin' | 'confirmed' | 'declined'
+  lines: NewOrderLine[]
+  createdAt: string
+}
 
 function newId(prefix: string): string {
   return `${prefix}_${randomUUID().replace(/-/g, '').slice(0, 12)}`
@@ -39,7 +52,8 @@ export class MemoryStore implements Store {
   orders: OrderRecord[]
   lines: OrderLineRecord[]
   production: ProductionEntryRecord[] = []
-  procurement: ProcurementOrderRecord[] = []
+  procurement: StoredProcurement[] = []
+  pending: PendingRow[] = []
   documents: DocumentRow[] = []
   messages: ClaimedMessage[] = []
   relations: Array<{ userId: string; phoneNumber: string }> = []
@@ -196,7 +210,137 @@ export class MemoryStore implements Store {
   }
 
   async listProcurementOrders(): Promise<ProcurementOrderRecord[]> {
-    return this.procurement.map((order) => ({ ...order }))
+    return this.procurement.map(({ pendingOrderId: _pendingOrderId, ...order }) => ({ ...order }))
+  }
+
+  async holdShortOrder(input: {
+    customerId: string
+    poNumber: string
+    poDate: string | null
+    remoteJid: string
+    documentId: string
+    lines: NewOrderLine[]
+    shortages: Array<{ itemId: string; quantity: number; unit: string }>
+    assigneeId: string
+  }): Promise<{ id: string }> {
+    const id = newId('pnd')
+    const createdAt = new Date().toISOString()
+    const customer = this.customers.find((row) => row.id === input.customerId)
+    const assignee = this.users.find((row) => row.id === input.assigneeId)
+    this.pending.push({
+      id,
+      customerId: input.customerId,
+      poNumber: input.poNumber,
+      poDate: input.poDate,
+      remoteJid: input.remoteJid,
+      documentId: input.documentId,
+      status: 'awaiting_admin',
+      lines: input.lines.map((line) => ({ ...line })),
+      createdAt,
+    })
+    for (const shortage of input.shortages) {
+      const item = this.items.find((row) => row.id === shortage.itemId)
+      this.procurement.push({
+        id: newId('prc'),
+        orderId: null,
+        pendingOrderId: id,
+        poNumber: input.poNumber,
+        customerName: customer?.name ?? '',
+        productionEntryId: null,
+        itemName: item?.name ?? shortage.itemId,
+        quantityKg: String(shortage.quantity),
+        unit: shortage.unit,
+        assigneeId: input.assigneeId,
+        assigneeName: assignee?.name ?? 'Joshy',
+        createdAt,
+      })
+    }
+    return { id }
+  }
+
+  async findAwaitingConfirmation(remoteJid: string): Promise<PendingConfirmation | null> {
+    const pending = [...this.pending].reverse().find((row) => row.remoteJid === remoteJid && row.status === 'awaiting_admin')
+    if (!pending) return null
+    return { id: pending.id, poNumber: pending.poNumber, lines: pending.lines.map((line) => ({ ...line })) }
+  }
+
+  async confirmPendingOrder(
+    id: string,
+    production: ProductionPlan | null,
+  ): Promise<{ id: string; poNumber: string; productionEntryId: string | null; procurementOrderId: string | null } | null> {
+    const pending = this.pending.find((row) => row.id === id && row.status === 'awaiting_admin')
+    if (!pending) return null
+    const orderId = newId('ord')
+    const createdAt = new Date().toISOString()
+    const customer = this.customers.find((row) => row.id === pending.customerId)
+    this.orders.push({
+      id: orderId,
+      customerId: pending.customerId,
+      customerName: customer?.name ?? '',
+      poNumber: pending.poNumber,
+      poDate: pending.poDate,
+      status: 'open',
+      source: 'whatsapp',
+      createdAt,
+    })
+    for (const line of pending.lines) {
+      const item = this.items.find((row) => row.id === line.itemId)
+      this.lines.push({
+        id: newId('lin'),
+        orderId,
+        itemId: line.itemId,
+        sku: item?.sku ?? '',
+        itemName: item?.name ?? '',
+        description: line.description,
+        quantity: line.quantity,
+        unit: line.unit,
+        unitPrice: line.unitPrice,
+      })
+    }
+    const document = this.documents.find((row) => row.id === pending.documentId)
+    if (document) document.orderId = orderId
+    for (const row of this.procurement) {
+      if (row.pendingOrderId === pending.id) row.orderId = orderId
+    }
+    pending.status = 'confirmed'
+    if (!production) return { id: orderId, poNumber: pending.poNumber, productionEntryId: null, procurementOrderId: null }
+    const productionEntryId = newId('prd')
+    const procurementOrderId = newId('prc')
+    const item = this.items.find((row) => row.id === production.rawItemId)
+    const assignee = this.users.find((row) => row.id === production.assigneeId)
+    this.production.push({
+      id: productionEntryId,
+      orderId,
+      poNumber: pending.poNumber,
+      customerName: customer?.name ?? '',
+      finishedGoodsKg: production.finishedGoodsKg,
+      kgBananaPerKgChips: production.kgBananaPerKgChips,
+      bananaKg: production.bananaKg,
+      sourceMonths: production.sourceMonths,
+      createdAt,
+    })
+    this.procurement.push({
+      id: procurementOrderId,
+      orderId,
+      pendingOrderId: null,
+      poNumber: pending.poNumber,
+      customerName: customer?.name ?? '',
+      productionEntryId,
+      itemName: item?.name ?? 'Raw banana',
+      quantityKg: production.bananaKg,
+      unit: 'kg',
+      assigneeId: production.assigneeId,
+      assigneeName: assignee?.name ?? 'Joshy',
+      createdAt,
+    })
+    return { id: orderId, poNumber: pending.poNumber, productionEntryId, procurementOrderId }
+  }
+
+  async declinePendingOrder(id: string): Promise<{ poNumber: string } | null> {
+    const pending = this.pending.find((row) => row.id === id && row.status === 'awaiting_admin')
+    if (!pending) return null
+    pending.status = 'declined'
+    return { poNumber: pending.poNumber }
   }
 
   async createOrder(input: {
@@ -259,6 +403,7 @@ export class MemoryStore implements Store {
     this.procurement.push({
       id: procurementOrderId,
       orderId: id,
+      pendingOrderId: null,
       poNumber: input.poNumber,
       customerName: customer?.name ?? '',
       productionEntryId,

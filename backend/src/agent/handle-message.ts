@@ -1,11 +1,14 @@
 import { bananaRequirement } from '../domain/banana'
+import { adminOnlyReply, confirmationChoice, declinedReply } from '../domain/confirm'
 import { availabilityMap, dashboardSnapshot } from '../domain/reads'
 import {
   createdReply,
   decideIntake,
   lineFailureReply,
   noInventoryReply,
+  procureQuantity,
   shortReply,
+  shortStockReply,
   type ExtractedPo,
 } from '../domain/intake'
 import { PROCUREMENT_ASSIGNEE_ID, RAW_BANANA_ITEM_ID } from '../db/seed-data'
@@ -137,6 +140,42 @@ export async function processPersonalPdf(
     await sendBotText(deps, message, withSender(lineFailureReply(decision.descriptions), speaker))
     return
   }
+  if (decision.kind === 'short') {
+    if (!message.pdf) return
+    const documentId = await deps.store.insertDocument({
+      filename: message.pdf.fileName,
+      mimeType: message.pdf.mimeType,
+      content,
+      messageId: message.id,
+    })
+    await deps.store.holdShortOrder({
+      customerId: decision.customerId,
+      poNumber: decision.poNumber,
+      poDate: decision.poDate,
+      remoteJid: replyChatJid(message),
+      documentId,
+      lines: decision.lines.map((line) => ({
+        itemId: line.itemId,
+        description: line.description,
+        quantity: line.quantity,
+        unit: line.unit,
+        unitPrice: line.unitPrice,
+      })),
+      shortages: decision.shortages.map((row) => ({
+        itemId: row.itemId,
+        quantity: procureQuantity(row.requested, row.available),
+        unit: row.unit,
+      })),
+      assigneeId: PROCUREMENT_ASSIGNEE_ID,
+    })
+    const accounts = await deps.store.listAccountLinks()
+    const joshy = accounts.find((account) => account.id === PROCUREMENT_ASSIGNEE_ID)
+    const mentionPhones = joshy?.phoneNumber ? [phoneDigits(joshy.phoneNumber)] : []
+    const reply = shortStockReply(decision.poNumber, decision.shortages)
+    const mentioned = mentionPhones.length > 0 ? reply.replace('Joshy', `Joshy @${mentionPhones[0]}`) : reply
+    await sendBotText(deps, message, withSender(mentioned, speaker), mentionPhones)
+    return
+  }
 
   const requirement = bananaRequirement(decision.lines)
   try {
@@ -206,6 +245,56 @@ export async function handleIncoming(
   }
 
   const text = message.text?.trim() ?? ''
+  const choice = text ? confirmationChoice(text) : null
+  if (choice) {
+    const pending = await deps.store.findAwaitingConfirmation(replyChatJid(message))
+    if (pending) {
+      if (people.speaker?.role !== 'admin') {
+        await sendBotText(deps, message, withSender(adminOnlyReply(pending.poNumber), people.speaker))
+        return
+      }
+      if (choice === 'no') {
+        const declined = await deps.store.declinePendingOrder(pending.id)
+        await sendBotText(deps, message, withSender(declinedReply(declined?.poNumber ?? pending.poNumber), people.speaker))
+        return
+      }
+      const requirement = bananaRequirement(pending.lines)
+      const created = await deps.store.confirmPendingOrder(
+        pending.id,
+        requirement.bananaKg > 0
+          ? {
+              finishedGoodsKg: requirement.finishedGoodsKg.toFixed(3),
+              kgBananaPerKgChips: requirement.kgBananaPerKgChips.toFixed(3),
+              bananaKg: requirement.bananaKg.toFixed(3),
+              sourceMonths: requirement.sourceMonths,
+              rawItemId: RAW_BANANA_ITEM_ID,
+              assigneeId: PROCUREMENT_ASSIGNEE_ID,
+            }
+          : null,
+      )
+      if (!created) {
+        await sendBotText(deps, message, withSender(declinedReply(pending.poNumber), people.speaker))
+        return
+      }
+      const accounts = await deps.store.listAccountLinks()
+      const joshy = accounts.find((account) => account.id === PROCUREMENT_ASSIGNEE_ID)
+      const mentionPhones = joshy?.phoneNumber ? [phoneDigits(joshy.phoneNumber)] : []
+      const reply = createdReply({
+        orderId: created.id,
+        poNumber: created.poNumber,
+        finishedGoodsKg: requirement.finishedGoodsKg,
+        bananaKg: requirement.bananaKg,
+        procurementOrderId: created.procurementOrderId,
+        skipped: requirement.skipped,
+      })
+      const mentioned =
+        mentionPhones.length > 0 && created.procurementOrderId
+          ? reply.replace('Joshy', `Joshy @${mentionPhones[0]}`)
+          : reply
+      await sendBotText(deps, message, withSender(mentioned, people.speaker), mentionPhones)
+      return
+    }
+  }
   const quotedText = message.quotedText?.trim() || null
   const mustReply = chatKind === 'personal' || chatKind === 'self'
   if (!text && !quotedText) {

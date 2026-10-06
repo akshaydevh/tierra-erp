@@ -42,10 +42,10 @@ export type ProductionEntry = {
 
 export type ProcurementOrder = {
   id: string
-  orderId: string
+  orderId: string | null
   poNumber: string
   customerName: string
-  productionEntryId: string
+  productionEntryId: string | null
   itemName: string
   quantityKg: string
   unit: string

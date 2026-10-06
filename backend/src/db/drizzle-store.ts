@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { and, desc, eq, gt, inArray } from 'drizzle-orm'
+import { alias } from 'drizzle-orm/pg-core'
 import type { PostgresJsDatabase } from 'drizzle-orm/postgres-js'
 import * as schema from './schema'
 import type { RecentMessage, Store } from './store'
@@ -10,8 +11,11 @@ import type {
   Customer,
   Item,
   OrderLineRecord,
+  NewOrderLine,
   OrderRecord,
+  PendingConfirmation,
   ProcurementOrderRecord,
+  ProductionPlan,
   ProductionEntryRecord,
   PublicUser,
   Role,
@@ -319,12 +323,15 @@ export class DrizzleStore implements Store {
   }
 
   async listProcurementOrders(): Promise<ProcurementOrderRecord[]> {
+    const pendingCustomer = alias(schema.customers, 'pending_customer')
     const rows = await this.db
       .select({
         id: schema.procurementOrders.id,
         orderId: schema.procurementOrders.orderId,
-        poNumber: schema.orders.poNumber,
-        customerName: schema.customers.name,
+        orderPoNumber: schema.orders.poNumber,
+        pendingPoNumber: schema.pendingOrders.poNumber,
+        orderCustomerName: schema.customers.name,
+        pendingCustomerName: pendingCustomer.name,
         productionEntryId: schema.procurementOrders.productionEntryId,
         itemName: schema.items.name,
         quantityKg: schema.procurementOrders.quantityKg,
@@ -334,15 +341,181 @@ export class DrizzleStore implements Store {
         createdAt: schema.procurementOrders.createdAt,
       })
       .from(schema.procurementOrders)
-      .innerJoin(schema.orders, eq(schema.orders.id, schema.procurementOrders.orderId))
-      .innerJoin(schema.customers, eq(schema.customers.id, schema.orders.customerId))
+      .leftJoin(schema.orders, eq(schema.orders.id, schema.procurementOrders.orderId))
+      .leftJoin(schema.customers, eq(schema.customers.id, schema.orders.customerId))
+      .leftJoin(schema.pendingOrders, eq(schema.pendingOrders.id, schema.procurementOrders.pendingOrderId))
+      .leftJoin(pendingCustomer, eq(pendingCustomer.id, schema.pendingOrders.customerId))
       .innerJoin(schema.items, eq(schema.items.id, schema.procurementOrders.itemId))
       .innerJoin(schema.users, eq(schema.users.id, schema.procurementOrders.assigneeId))
       .orderBy(desc(schema.procurementOrders.createdAt))
     return rows.map((row) => ({
-      ...row,
+      id: row.id,
+      orderId: row.orderId,
+      poNumber: row.orderPoNumber ?? row.pendingPoNumber ?? '',
+      customerName: row.orderCustomerName ?? row.pendingCustomerName ?? '',
+      productionEntryId: row.productionEntryId,
+      itemName: row.itemName,
+      quantityKg: row.quantityKg,
+      unit: row.unit,
+      assigneeId: row.assigneeId,
+      assigneeName: row.assigneeName,
       createdAt: row.createdAt.toISOString(),
     }))
+  }
+
+  async holdShortOrder(input: {
+    customerId: string
+    poNumber: string
+    poDate: string | null
+    remoteJid: string
+    documentId: string
+    lines: NewOrderLine[]
+    shortages: Array<{ itemId: string; quantity: number; unit: string }>
+    assigneeId: string
+  }): Promise<{ id: string }> {
+    const id = newId('pnd')
+    await this.db.transaction(async (tx) => {
+      await tx.insert(schema.pendingOrders).values({
+        id,
+        customerId: input.customerId,
+        poNumber: input.poNumber,
+        poDate: input.poDate,
+        remoteJid: input.remoteJid,
+        documentId: input.documentId,
+        status: 'awaiting_admin',
+      })
+      for (const line of input.lines) {
+        await tx.insert(schema.pendingOrderLines).values({
+          id: newId('pln'),
+          pendingOrderId: id,
+          itemId: line.itemId,
+          description: line.description,
+          quantity: line.quantity,
+          unit: line.unit,
+          unitPrice: line.unitPrice,
+        })
+      }
+      for (const shortage of input.shortages) {
+        await tx.insert(schema.procurementOrders).values({
+          id: newId('prc'),
+          pendingOrderId: id,
+          itemId: shortage.itemId,
+          quantityKg: String(shortage.quantity),
+          unit: shortage.unit,
+          assigneeId: input.assigneeId,
+        })
+      }
+    })
+    return { id }
+  }
+
+  async findAwaitingConfirmation(remoteJid: string): Promise<PendingConfirmation | null> {
+    const pending = await this.db
+      .select()
+      .from(schema.pendingOrders)
+      .where(and(eq(schema.pendingOrders.remoteJid, remoteJid), eq(schema.pendingOrders.status, 'awaiting_admin')))
+      .orderBy(desc(schema.pendingOrders.createdAt))
+      .limit(1)
+    const row = pending[0]
+    if (!row) return null
+    const lines = await this.db
+      .select()
+      .from(schema.pendingOrderLines)
+      .where(eq(schema.pendingOrderLines.pendingOrderId, row.id))
+    return {
+      id: row.id,
+      poNumber: row.poNumber,
+      lines: lines.map((line) => ({
+        itemId: line.itemId,
+        description: line.description,
+        quantity: line.quantity,
+        unit: line.unit,
+        unitPrice: line.unitPrice,
+      })),
+    }
+  }
+
+  async confirmPendingOrder(
+    id: string,
+    production: ProductionPlan | null,
+  ): Promise<{ id: string; poNumber: string; productionEntryId: string | null; procurementOrderId: string | null } | null> {
+    return this.db.transaction(async (tx) => {
+      const pendingRows = await tx
+        .select()
+        .from(schema.pendingOrders)
+        .where(and(eq(schema.pendingOrders.id, id), eq(schema.pendingOrders.status, 'awaiting_admin')))
+        .limit(1)
+      const pending = pendingRows[0]
+      if (!pending) return null
+      const lines = await tx
+        .select()
+        .from(schema.pendingOrderLines)
+        .where(eq(schema.pendingOrderLines.pendingOrderId, pending.id))
+      const orderId = newId('ord')
+      await tx.insert(schema.orders).values({
+        id: orderId,
+        customerId: pending.customerId,
+        poNumber: pending.poNumber,
+        poDate: pending.poDate,
+        status: 'open',
+        source: 'whatsapp',
+      })
+      for (const line of lines) {
+        await tx.insert(schema.orderLines).values({
+          id: newId('lin'),
+          orderId,
+          itemId: line.itemId,
+          description: line.description,
+          quantity: line.quantity,
+          unit: line.unit,
+          unitPrice: line.unitPrice,
+        })
+      }
+      if (pending.documentId) {
+        await tx
+          .update(schema.orderDocuments)
+          .set({ orderId })
+          .where(eq(schema.orderDocuments.id, pending.documentId))
+      }
+      await tx
+        .update(schema.procurementOrders)
+        .set({ orderId })
+        .where(eq(schema.procurementOrders.pendingOrderId, pending.id))
+      await tx.update(schema.pendingOrders).set({ status: 'confirmed' }).where(eq(schema.pendingOrders.id, pending.id))
+      if (!production) return { id: orderId, poNumber: pending.poNumber, productionEntryId: null, procurementOrderId: null }
+      const productionEntryId = newId('prd')
+      const procurementOrderId = newId('prc')
+      await tx.insert(schema.productionEntries).values({
+        id: productionEntryId,
+        orderId,
+        finishedGoodsKg: production.finishedGoodsKg,
+        kgBananaPerKgChips: production.kgBananaPerKgChips,
+        bananaKg: production.bananaKg,
+        sourceMonths: production.sourceMonths,
+      })
+      await tx.insert(schema.procurementOrders).values({
+        id: procurementOrderId,
+        orderId,
+        productionEntryId,
+        itemId: production.rawItemId,
+        quantityKg: production.bananaKg,
+        unit: 'kg',
+        assigneeId: production.assigneeId,
+      })
+      return { id: orderId, poNumber: pending.poNumber, productionEntryId, procurementOrderId }
+    })
+  }
+
+  async declinePendingOrder(id: string): Promise<{ poNumber: string } | null> {
+    const pendingRows = await this.db
+      .select()
+      .from(schema.pendingOrders)
+      .where(and(eq(schema.pendingOrders.id, id), eq(schema.pendingOrders.status, 'awaiting_admin')))
+      .limit(1)
+    const pending = pendingRows[0]
+    if (!pending) return null
+    await this.db.update(schema.pendingOrders).set({ status: 'declined' }).where(eq(schema.pendingOrders.id, pending.id))
+    return { poNumber: pending.poNumber }
   }
 
   async createOrder(input: {

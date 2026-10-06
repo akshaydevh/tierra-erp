@@ -104,7 +104,7 @@ describe('purchase order intake', () => {
     expect(empty.kind).toBe('no_inventory')
   })
 
-  it('accepts a line even when finished-goods stock is short', () => {
+  it('refuses a line when finished-goods stock cannot cover it', () => {
     const short = decideIntake(
       {
         customerName: 'Beyond Snack',
@@ -119,7 +119,19 @@ describe('purchase order intake', () => {
       available,
       inventory,
     )
-    expect(short.kind).toBe('ok')
+    expect(short.kind).toBe('short')
+    if (short.kind === 'short') {
+      expect(short.shortages).toEqual([
+        {
+          itemId: 'item_ban80',
+          sku: 'BAN-80G',
+          name: 'Banana chips 80g',
+          requested: 10,
+          available: -60,
+          unit: 'pouch',
+        },
+      ])
+    }
 
     const ok = decideIntake(
       {
@@ -171,9 +183,10 @@ describe('purchase order intake', () => {
       available,
       inventory,
     )
-    expect(decision.kind).toBe('ok')
-    if (decision.kind === 'ok') {
-      expect(decision.lines.map((line) => line.sku).sort()).toEqual(['BAN-100G', 'BAN-500G'])
+    expect(decision.kind).toBe('short')
+    if (decision.kind === 'short') {
+      expect(decision.shortages.map((row) => row.sku).sort()).toEqual(['BAN-100G', 'BAN-500G'])
+      expect(decision.shortages.every((row) => row.available === 0)).toBe(true)
     }
   })
 

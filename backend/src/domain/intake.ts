@@ -28,15 +28,25 @@ export type MatchedLine = {
 }
 
 export type Shortage = {
+  itemId: string
   sku: string
   name: string
   requested: number
   available: number
+  unit: string
 }
 
 export type IntakeDecision =
   | { kind: 'no_inventory'; customerName: string }
   | { kind: 'unmatched_lines'; descriptions: string[] }
+  | {
+      kind: 'short'
+      customerId: string
+      poNumber: string
+      poDate: string | null
+      lines: MatchedLine[]
+      shortages: Shortage[]
+    }
   | {
       kind: 'ok'
       customerId: string
@@ -167,6 +177,31 @@ export function decideIntake(
   }
   if (unmatched.length > 0) return { kind: 'unmatched_lines', descriptions: unmatched }
 
+  const shortages: Shortage[] = []
+  for (const line of grouped.values()) {
+    const available = availableByItem.get(line.itemId) ?? 0
+    if (available < line.quantity) {
+      shortages.push({
+        itemId: line.itemId,
+        sku: line.sku,
+        name: line.name,
+        requested: line.quantity,
+        available,
+        unit: line.unit,
+      })
+    }
+  }
+  if (shortages.length > 0) {
+    return {
+      kind: 'short',
+      customerId: customer.id,
+      poNumber: po.poNumber,
+      poDate: po.poDate,
+      lines: [...grouped.values()],
+      shortages,
+    }
+  }
+
   return {
     kind: 'ok',
     customerId: customer.id,
@@ -184,14 +219,21 @@ export function lineFailureReply(descriptions: string[]): string {
   return `Could not match these lines to items: ${descriptions.join(', ')}. No order was created.`
 }
 
-export function shortReply(poNumber: string, shortages: Shortage[]): string {
-  const lines = shortages
-    .map(
-      (row) =>
-        `${row.name} (${row.sku}): requested ${row.requested}, available ${row.available}.`,
-    )
-    .join('\n')
-  return `Not enough stock to fulfil PO ${poNumber}.\n${lines}\nNo order was created.`
+export function procureQuantity(requested: number, available: number): number {
+  return requested - Math.max(available, 0)
+}
+
+export function shortStockReply(poNumber: string, shortages: Shortage[]): string {
+  const names = shortages.map((row) => row.name)
+  const lines = names.map((name) => `${name} is not available in sufficient quantity.`)
+  lines.push(`Added ${names.join(', ')} to procurement, assigned to Joshy.`)
+  lines.push(`No order was created. An admin can reply YES to confirm PO ${poNumber}.`)
+  return lines.join('\n')
+}
+
+export function shortReply(poNumber: string, shortages: Array<{ name: string }>): string {
+  const lines = shortages.map((row) => `${row.name} is not available in sufficient quantity.`)
+  return `${lines.join('\n')}\nNo order was created for PO ${poNumber}.`
 }
 
 function formatKg(value: number): string {

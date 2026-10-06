@@ -9,7 +9,7 @@ export default async function ProcurementPage() {
       <div className="sechead">
         <div>
           <h3>Procurement</h3>
-          <p>Raw banana raised from a customer purchase order and assigned to Joshy</p>
+          <p>Items assigned to Joshy, including packs a purchase order could not cover</p>
         </div>
         <span className="zid">Zone 1 · Buy</span>
       </div>
@@ -31,9 +31,13 @@ export default async function ProcurementPage() {
               {orders.map((order) => (
                 <tr key={order.id}>
                   <td>
-                    <Link href={`/orders/${order.orderId}`}>
+                    {order.orderId ? (
+                      <Link href={`/orders/${order.orderId}`}>
+                        <b>{order.poNumber}</b>
+                      </Link>
+                    ) : (
                       <b>{order.poNumber}</b>
-                    </Link>
+                    )}
                     <div className="sub num">{order.id}</div>
                   </td>
                   <td>{order.customerName}</td>

@@ -318,7 +318,7 @@ describe('whatsapp purchase orders', () => {
     expect(document.headers.get('content-type')).toBe('application/pdf')
   })
 
-  it('creates a banana procurement order when finished-goods stock is short', async () => {
+  it('refuses the purchase order when finished-goods stock is short', async () => {
     ctx.setExtracted({
       customerName: 'Beyond Snack',
       poNumber: 'PO-SHORT',
@@ -335,13 +335,64 @@ describe('whatsapp purchase orders', () => {
     })
     const response = await post(pdfBody('m-short'))
     expect(response.status).toBe(200)
-    expect(ctx.evolution.sent[0]?.text).toContain('Created order')
-    expect(ctx.evolution.sent[0]?.text).toContain('Banana required')
-    expect(ctx.evolution.sent[0]?.text).toContain('assigned to Joshy')
+    expect(ctx.evolution.sent[0]?.text).toContain('Banana chips 80g is not available in sufficient quantity.')
+    expect(ctx.evolution.sent[0]?.text).toContain('Added Banana chips 80g to procurement, assigned to Joshy.')
+    expect(ctx.evolution.sent[0]?.text).toContain('An admin can reply YES to confirm PO PO-SHORT.')
+    expect(ctx.evolution.sent[0]?.text).toContain('No order was created')
+    expect(ctx.store.orders.some((order) => order.poNumber === 'PO-SHORT')).toBe(false)
+    expect(
+      ctx.store.procurement.some(
+        (order) => order.poNumber === 'PO-SHORT' && order.itemName === 'Banana chips 80g' && order.orderId === null,
+      ),
+    ).toBe(true)
+  })
+
+  it('creates the held order when an admin confirms', async () => {
+    await ctx.store.saveRelation({ userId: 'usr_alex', phoneNumber: '919812345678' })
+    ctx.setExtracted({
+      customerName: 'Beyond Snack',
+      poNumber: 'PO-SHORT',
+      poDate: null,
+      lines: [
+        {
+          description: 'Banana chips 80g',
+          quantity: 200,
+          unit: 'pouch',
+          buyerCode: 'BAN-80G',
+          price: null,
+        },
+      ],
+    })
+    await post(pdfBody('m-hold'))
+    const yes = await post(textMessage('m-yes', '919812345678@s.whatsapp.net', 'YES'))
+    expect(yes.status).toBe(200)
+    expect(ctx.evolution.sent.at(-1)?.text).toContain('Created order')
+    expect(ctx.evolution.sent.at(-1)?.text).toContain('PO-SHORT')
     expect(ctx.store.orders.some((order) => order.poNumber === 'PO-SHORT')).toBe(true)
-    expect(ctx.store.procurement.some((order) => order.poNumber === 'PO-SHORT' && order.assigneeName === 'Joshy')).toBe(
-      true,
-    )
+    expect(ctx.judgeCalls()).toBe(0)
+  })
+
+  it('refuses confirmation from an office account', async () => {
+    await ctx.store.saveRelation({ userId: 'usr_anju', phoneNumber: '919812345678' })
+    ctx.setExtracted({
+      customerName: 'Beyond Snack',
+      poNumber: 'PO-SHORT',
+      poDate: null,
+      lines: [
+        {
+          description: 'Banana chips 80g',
+          quantity: 200,
+          unit: 'pouch',
+          buyerCode: 'BAN-80G',
+          price: null,
+        },
+      ],
+    })
+    await post(pdfBody('m-hold-office'))
+    const yes = await post(textMessage('m-office-yes', '919812345678@s.whatsapp.net', 'YES'))
+    expect(yes.status).toBe(200)
+    expect(ctx.evolution.sent.at(-1)?.text).toContain('Only an admin can confirm PO PO-SHORT.')
+    expect(ctx.store.orders.some((order) => order.poNumber === 'PO-SHORT')).toBe(false)
   })
 
   it('tells WhatsApp when the buyer has no inventory', async () => {
@@ -369,6 +420,10 @@ describe('whatsapp purchase orders', () => {
 
   it('creates production and a banana procurement order from the Trent purchase order', async () => {
     await ctx.store.saveRelation({ userId: 'usr_joshy', phoneNumber: '919700000001' })
+    for (const balance of ctx.store.balances) {
+      if (balance.itemId === 'item_fab170') balance.onHand = 25000
+      if (balance.itemId === 'item_fab500') balance.onHand = 3000
+    }
     ctx.setExtracted({
       customerName: 'Trent Hypermarket Private Limited',
       poNumber: '5901346472',

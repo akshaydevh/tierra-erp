@@ -10,6 +10,7 @@ import type {
   AccountLink,
   ProcurementOrderRecord,
   ProductionEntryRecord,
+  PendingConfirmation,
   ProductionPlan,
   PublicUser,
   StoredDocument,
@@ -64,4 +65,20 @@ export interface Store {
     document: StoredDocument & { messageId: string }
     production: ProductionPlan | null
   }): Promise<{ id: string; productionEntryId: string | null; procurementOrderId: string | null }>
+  holdShortOrder(input: {
+    customerId: string
+    poNumber: string
+    poDate: string | null
+    remoteJid: string
+    documentId: string
+    lines: NewOrderLine[]
+    shortages: Array<{ itemId: string; quantity: number; unit: string }>
+    assigneeId: string
+  }): Promise<{ id: string }>
+  findAwaitingConfirmation(remoteJid: string): Promise<PendingConfirmation | null>
+  confirmPendingOrder(
+    id: string,
+    production: ProductionPlan | null,
+  ): Promise<{ id: string; poNumber: string; productionEntryId: string | null; procurementOrderId: string | null } | null>
+  declinePendingOrder(id: string): Promise<{ poNumber: string } | null>
 }

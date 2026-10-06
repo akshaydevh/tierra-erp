@@ -144,14 +144,49 @@ export const productionEntries = pgTable('production_entries', {
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 })
 
+export const pendingOrders = pgTable(
+  'pending_orders',
+  {
+    id: text('id').primaryKey(),
+    customerId: text('customer_id')
+      .notNull()
+      .references(() => customers.id),
+    poNumber: text('po_number').notNull(),
+    poDate: date('po_date'),
+    remoteJid: text('remote_jid').notNull(),
+    documentId: text('document_id'),
+    status: text('status').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    check(
+      'pending_orders_status_check',
+      sql`${table.status} in ('awaiting_admin', 'confirmed', 'declined')`,
+    ),
+  ],
+)
+
+export const pendingOrderLines = pgTable('pending_order_lines', {
+  id: text('id').primaryKey(),
+  pendingOrderId: text('pending_order_id')
+    .notNull()
+    .references(() => pendingOrders.id, { onDelete: 'cascade' }),
+  itemId: text('item_id')
+    .notNull()
+    .references(() => items.id),
+  description: text('description').notNull(),
+  quantity: integer('quantity').notNull(),
+  unit: text('unit').notNull(),
+  unitPrice: numeric('unit_price', { precision: 12, scale: 2 }),
+})
+
 export const procurementOrders = pgTable('procurement_orders', {
   id: text('id').primaryKey(),
-  orderId: text('order_id')
-    .notNull()
-    .references(() => orders.id, { onDelete: 'cascade' }),
-  productionEntryId: text('production_entry_id')
-    .notNull()
-    .references(() => productionEntries.id, { onDelete: 'cascade' }),
+  orderId: text('order_id').references(() => orders.id, { onDelete: 'cascade' }),
+  productionEntryId: text('production_entry_id').references(() => productionEntries.id, {
+    onDelete: 'cascade',
+  }),
+  pendingOrderId: text('pending_order_id').references(() => pendingOrders.id, { onDelete: 'cascade' }),
   itemId: text('item_id')
     .notNull()
     .references(() => items.id),

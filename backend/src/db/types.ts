@@ -131,16 +131,22 @@ export type ProductionEntryRecord = {
 
 export type ProcurementOrderRecord = {
   id: string
-  orderId: string
+  orderId: string | null
   poNumber: string
   customerName: string
-  productionEntryId: string
+  productionEntryId: string | null
   itemName: string
   quantityKg: string
   unit: string
   assigneeId: string
   assigneeName: string
   createdAt: string
+}
+
+export type PendingConfirmation = {
+  id: string
+  poNumber: string
+  lines: NewOrderLine[]
 }
 
 export type StoredDocument = {
