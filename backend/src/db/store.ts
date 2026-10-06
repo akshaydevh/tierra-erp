@@ -27,6 +27,15 @@ export type RecentMessage = {
   body: string | null
 }
 
+export type ThreadMessage = {
+  id: string
+  fromMe: boolean
+  hasPdf: boolean
+  body: string | null
+  filename: string | null
+  createdAt: string
+}
+
 export interface Store {
   findUserByEmail(email: string): Promise<User | null>
   createSession(input: { userId: string; tokenHash: string; expiresAt: Date }): Promise<void>
@@ -55,12 +64,14 @@ export interface Store {
 
   claimMessage(message: ClaimedMessage): Promise<boolean>
   listRecentMessages(remoteJids: string[], limit: number): Promise<RecentMessage[]>
+  listThread(remoteJid: string): Promise<ThreadMessage[]>
   releaseMessage(evolutionMessageId: string): Promise<void>
   insertDocument(input: StoredDocument & { messageId: string }): Promise<string>
   createOrder(input: {
     customerId: string
     poNumber: string
     poDate: string | null
+    remoteJid: string
     lines: NewOrderLine[]
     document: StoredDocument & { messageId: string }
     production: ProductionPlan | null

@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="8 4 324 214">
+  <ellipse cx="170" cy="112" rx="156" ry="100" fill="#ffffff" stroke="#64261c" stroke-width="8"/>
+  <text x="170" y="92" text-anchor="middle" fill="#64261c" font-family="Georgia, 'Times New Roman', serif" font-size="42" font-weight="700" letter-spacing="2">TIERRA</text>
+  <path d="M48 132c70-6 150 2 250 10M40 148c74-4 154 6 252 12" fill="none" stroke="#64261c" stroke-width="4" stroke-linecap="round"/>
+  <ellipse cx="170" cy="168" rx="36" ry="22" fill="#ffffff" stroke="#64261c" stroke-width="4"/>
+  <ellipse cx="128" cy="162" rx="26" ry="18" fill="#ffffff" stroke="#64261c" stroke-width="4"/>
+  <ellipse cx="214" cy="160" rx="28" ry="18" fill="#ffffff" stroke="#64261c" stroke-width="4"/>
+</svg>

@@ -9,6 +9,7 @@ import {
   readCookie,
   sessionCookie,
 } from './auth/cookie'
+import { PDF_BYTE_LIMIT, listDeskMessages, postDeskTurn } from './agent/desk'
 import type { AgentDeps } from './agent/handle-message'
 import { commandCentre, inventoryRows, orderDetail, orderList } from './domain/reads'
 import type { PublicUser } from './db/types'
@@ -114,6 +115,41 @@ export function createApp(deps: AppDeps) {
   app.get('/api/inventory', async (c) => c.json({ items: await inventoryRows(deps.store) }))
   app.get('/api/production', async (c) => c.json({ entries: await deps.store.listProductionEntries() }))
   app.get('/api/procurement', async (c) => c.json({ orders: await deps.store.listProcurementOrders() }))
+
+  app.get('/api/agent', async (c) => {
+    const user = await userFrom(c.req.header('cookie'))
+    if (!user) return c.json({ error: 'Unauthorized' }, 401)
+    return c.json({ messages: await listDeskMessages(deps, user.id) })
+  })
+
+  app.post('/api/agent', async (c) => {
+    const user = await userFrom(c.req.header('cookie'))
+    if (!user) return c.json({ error: 'Unauthorized' }, 401)
+    const form = await c.req.parseBody().catch(() => null)
+    if (!form || Array.isArray(form)) return c.json({ error: 'Write a message or attach a PDF' }, 400)
+    const text = typeof form.text === 'string' ? form.text : ''
+    const uploaded = form.file
+    let pdf: { filename: string; content: Buffer } | null = null
+    if (uploaded instanceof File) {
+      if (uploaded.size === 0) {
+        pdf = null
+      } else if (uploaded.type !== 'application/pdf' && !uploaded.name.toLowerCase().endsWith('.pdf')) {
+        return c.json({ error: 'Attach a PDF purchase order' }, 400)
+      } else if (uploaded.size > PDF_BYTE_LIMIT) {
+        return c.json({ error: 'That PDF is larger than 8MB' }, 400)
+      } else {
+        pdf = {
+          filename: uploaded.name || 'purchase-order.pdf',
+          content: Buffer.from(await uploaded.arrayBuffer()),
+        }
+      }
+    } else if (uploaded != null && uploaded !== '') {
+      return c.json({ error: 'Attach a PDF purchase order' }, 400)
+    }
+    const result = await postDeskTurn(deps, user, { text, pdf })
+    if (!result.ok) return c.json({ error: result.error }, result.status)
+    return c.json({ message: result.message, reply: result.reply })
+  })
 
   app.get('/api/whatsapp', async (c) => {
     return c.json({ connection: publicConnection(await deps.store.getWhatsapp()) })

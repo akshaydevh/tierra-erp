@@ -1,6 +1,12 @@
 export type Role = 'admin' | 'office'
 export type OrderStatus = 'open' | 'closed'
-export type OrderSource = 'seed' | 'whatsapp'
+export type OrderSource = 'seed' | 'whatsapp' | 'desk'
+
+export const DESK_THREAD_PREFIX = 'desk:'
+
+export function orderSourceForThread(remoteJid: string): 'whatsapp' | 'desk' {
+  return remoteJid.startsWith(DESK_THREAD_PREFIX) ? 'desk' : 'whatsapp'
+}
 export type WhatsappStatus = 'disconnected' | 'qr_pending' | 'connected'
 
 export type User = {

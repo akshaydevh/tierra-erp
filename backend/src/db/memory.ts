@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { seedBalances, seedCustomers, seedItems, seedMaterialItems, seedOrders, seedUsers } from './seed-data'
-import type { RecentMessage, Store } from './store'
+import type { RecentMessage, Store, ThreadMessage } from './store'
 import type {
   AccountLink,
   Balance,
@@ -10,7 +10,6 @@ import type {
   NewOrderLine,
   OrderLineRecord,
   OrderRecord,
-  OrderSource,
   OrderStatus,
   PendingConfirmation,
   ProcurementOrderRecord,
@@ -22,9 +21,10 @@ import type {
   User,
   WhatsappConnection,
 } from './types'
-import { toPublicUser } from './types'
+import { orderSourceForThread, toPublicUser } from './types'
 
 type SessionRow = { tokenHash: string; userId: string; expiresAt: Date }
+type MessageRow = ClaimedMessage & { createdAt: string }
 type DocumentRow = StoredDocument & { id: string; orderId: string | null; messageId: string | null }
 type StoredProcurement = ProcurementOrderRecord & { pendingOrderId: string | null }
 type PendingRow = {
@@ -55,7 +55,7 @@ export class MemoryStore implements Store {
   procurement: StoredProcurement[] = []
   pending: PendingRow[] = []
   documents: DocumentRow[] = []
-  messages: ClaimedMessage[] = []
+  messages: MessageRow[] = []
   relations: Array<{ userId: string; phoneNumber: string }> = []
   whatsapp: WhatsappConnection = {
     instanceName: 'tierra',
@@ -183,7 +183,7 @@ export class MemoryStore implements Store {
     if (this.messages.some((row) => row.evolutionMessageId === message.evolutionMessageId)) {
       return false
     }
-    this.messages.push({ ...message })
+    this.messages.push({ ...message, createdAt: new Date().toISOString() })
     return true
   }
 
@@ -193,6 +193,19 @@ export class MemoryStore implements Store {
       .filter((row) => jids.has(row.remoteJid))
       .slice(-limit)
       .map((row) => ({ remoteJid: row.remoteJid, fromMe: row.fromMe, body: row.body }))
+  }
+
+  async listThread(remoteJid: string): Promise<ThreadMessage[]> {
+    return this.messages
+      .filter((row) => row.remoteJid === remoteJid)
+      .map((row) => ({
+        id: row.evolutionMessageId,
+        fromMe: row.fromMe,
+        hasPdf: row.hasPdf,
+        body: row.body,
+        filename: this.documents.find((doc) => doc.messageId === row.evolutionMessageId)?.filename ?? null,
+        createdAt: row.createdAt,
+      }))
   }
 
   async releaseMessage(evolutionMessageId: string): Promise<void> {
@@ -280,7 +293,7 @@ export class MemoryStore implements Store {
       poNumber: pending.poNumber,
       poDate: pending.poDate,
       status: 'open',
-      source: 'whatsapp',
+      source: orderSourceForThread(pending.remoteJid),
       createdAt,
     })
     for (const line of pending.lines) {
@@ -347,6 +360,7 @@ export class MemoryStore implements Store {
     customerId: string
     poNumber: string
     poDate: string | null
+    remoteJid: string
     lines: NewOrderLine[]
     document: StoredDocument & { messageId: string }
     production: ProductionPlan | null
@@ -361,7 +375,7 @@ export class MemoryStore implements Store {
       poNumber: input.poNumber,
       poDate: input.poDate,
       status: 'open' satisfies OrderStatus,
-      source: 'whatsapp' satisfies OrderSource,
+      source: orderSourceForThread(input.remoteJid),
       createdAt,
     })
     for (const line of input.lines) {

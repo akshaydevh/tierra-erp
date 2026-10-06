@@ -3,6 +3,7 @@
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
 import { Icon } from './icon'
+import { Logo } from './logo'
 import { navItems, titleForPath } from '@/lib/nav'
 import type { Me } from '@/lib/types'
 
@@ -39,8 +40,7 @@ export function Shell({
     <div className="app">
       <aside className="side">
         <div className="brand">
-          <b>TIERRA</b>
-          <span>Food India</span>
+          <Logo variant="mark" />
         </div>
         <nav className="nav">
           {navItems.map((item) => {

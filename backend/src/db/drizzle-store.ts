@@ -1,9 +1,9 @@
 import { randomUUID } from 'node:crypto'
-import { and, desc, eq, gt, inArray } from 'drizzle-orm'
+import { and, asc, desc, eq, gt, inArray } from 'drizzle-orm'
 import { alias } from 'drizzle-orm/pg-core'
 import type { PostgresJsDatabase } from 'drizzle-orm/postgres-js'
 import * as schema from './schema'
-import type { RecentMessage, Store } from './store'
+import type { RecentMessage, Store, ThreadMessage } from './store'
 import type {
   AccountLink,
   Balance,
@@ -24,7 +24,7 @@ import type {
   WhatsappConnection,
   WhatsappStatus,
 } from './types'
-import { asItemKind, toPublicUser } from './types'
+import { asItemKind, orderSourceForThread, toPublicUser } from './types'
 
 type Database = PostgresJsDatabase<typeof schema>
 
@@ -281,6 +281,42 @@ export class DrizzleStore implements Store {
     return rows.reverse()
   }
 
+  async listThread(remoteJid: string): Promise<ThreadMessage[]> {
+    const rows = await this.db
+      .select({
+        id: schema.whatsappMessages.evolutionMessageId,
+        fromMe: schema.whatsappMessages.fromMe,
+        hasPdf: schema.whatsappMessages.hasPdf,
+        body: schema.whatsappMessages.body,
+        createdAt: schema.whatsappMessages.createdAt,
+        filename: schema.orderDocuments.filename,
+      })
+      .from(schema.whatsappMessages)
+      .leftJoin(
+        schema.orderDocuments,
+        eq(schema.orderDocuments.messageId, schema.whatsappMessages.evolutionMessageId),
+      )
+      .where(eq(schema.whatsappMessages.remoteJid, remoteJid))
+      .orderBy(asc(schema.whatsappMessages.createdAt))
+    const thread = new Map<string, ThreadMessage>()
+    for (const row of rows) {
+      const existing = thread.get(row.id)
+      if (existing) {
+        if (!existing.filename && row.filename) existing.filename = row.filename
+        continue
+      }
+      thread.set(row.id, {
+        id: row.id,
+        fromMe: row.fromMe,
+        hasPdf: row.hasPdf,
+        body: row.body,
+        filename: row.filename,
+        createdAt: row.createdAt.toISOString(),
+      })
+    }
+    return [...thread.values()]
+  }
+
   async releaseMessage(evolutionMessageId: string): Promise<void> {
     await this.db
       .delete(schema.whatsappMessages)
@@ -458,7 +494,7 @@ export class DrizzleStore implements Store {
         poNumber: pending.poNumber,
         poDate: pending.poDate,
         status: 'open',
-        source: 'whatsapp',
+        source: orderSourceForThread(pending.remoteJid),
       })
       for (const line of lines) {
         await tx.insert(schema.orderLines).values({
@@ -522,6 +558,7 @@ export class DrizzleStore implements Store {
     customerId: string
     poNumber: string
     poDate: string | null
+    remoteJid: string
     lines: import('./types').NewOrderLine[]
     document: StoredDocument & { messageId: string }
     production: import('./types').ProductionPlan | null
@@ -534,7 +571,7 @@ export class DrizzleStore implements Store {
         poNumber: input.poNumber,
         poDate: input.poDate,
         status: 'open',
-        source: 'whatsapp',
+        source: orderSourceForThread(input.remoteJid),
       })
       for (const line of input.lines) {
         await tx.insert(schema.orderLines).values({

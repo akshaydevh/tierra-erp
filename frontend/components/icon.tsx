@@ -15,6 +15,7 @@ export function Icon({ name }: { name: string }) {
     books: 'M48 48h56v160H48zM104 48h48l32 24v136h-80zM152 72h32',
     sliders: 'M48 80h160M48 128h160M48 176h160M88 80v0M160 128v0M112 176v0',
     signout: 'M112 48H64v160h48M112 128h96M176 96l32 32-32 32',
+    chat: 'M48 56h160a24 24 0 0 1 24 24v72a24 24 0 0 1-24 24H120l-48 40v-40H48a24 24 0 0 1-24-24V80a24 24 0 0 1 24-24z',
   }
   return (
     <svg className="i" viewBox="0 0 256 256" aria-hidden="true">

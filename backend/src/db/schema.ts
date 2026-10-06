@@ -114,7 +114,7 @@ export const orders = pgTable(
   },
   (table) => [
     check('orders_status_check', sql`${table.status} in ('open', 'closed')`),
-    check('orders_source_check', sql`${table.source} in ('seed', 'whatsapp')`),
+    check('orders_source_check', sql`${table.source} in ('seed', 'whatsapp', 'desk')`),
   ],
 )
 

@@ -47,21 +47,8 @@ svg.i { width: 1.25em; height: 1.25em; fill: none; stroke: currentColor; stroke-
   position: relative;
   z-index: 1;
 }
-.brandmark { text-align: center; margin-bottom: 40px; }
-.brandmark h1 {
-  font-size: 42px;
-  font-weight: 500;
-  letter-spacing: 0.4em;
-  margin: 0 -0.4em 4px 0;
-  line-height: 1.15;
-}
-.brandmark p {
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.4em;
-  text-transform: uppercase;
-  color: var(--inksoft);
-}
+.brandmark { width: min(280px, 100%); text-align: center; margin-bottom: 28px; }
+.tierra-logo { width: 100%; height: auto; display: block; }
 .logincard {
   width: 100%;
   max-width: 420px;
@@ -138,9 +125,8 @@ svg.i { width: 1.25em; height: 1.25em; fill: none; stroke: currentColor; stroke-
   height: 100%;
   min-width: 0;
 }
-.brand { height: 96px; padding: 0 32px; display: flex; flex-direction: column; justify-content: center; }
-.brand b { font-size: 20px; font-weight: 500; letter-spacing: 0.3em; margin-right: -0.3em; line-height: 1.1; }
-.brand span { font-size: 9px; font-weight: 700; letter-spacing: 0.3em; text-transform: uppercase; color: var(--inksoft); margin-top: 2px; }
+.brand { height: 108px; padding: 14px 22px 8px; display: flex; align-items: center; }
+.brand .tierra-logo { width: 168px; }
 .nav { padding: 0 16px 16px; display: flex; flex-direction: column; gap: 4px; overflow-y: auto; flex: 1; }
 .nav a, .foot a, .foot button {
   display: flex;
@@ -279,6 +265,103 @@ td .sub { font-size: 12px; color: var(--inksoft); margin-top: 2px; }
 .rel b { display: block; font-size: 14px; font-weight: 700; }
 .rel .field input { height: 40px; padding: 0 14px; }
 .empty { padding: 28px; color: var(--inksoft); }
+.page:has(.agent) { padding: 0; overflow: hidden; gap: 0; }
+.agent { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.agentlog {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 28px 40px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.agentempty {
+  margin: auto;
+  max-width: 460px;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  align-items: center;
+  padding: 24px 0;
+}
+.agentempty h3 { font-size: 20px; letter-spacing: -0.01em; }
+.agentempty p { color: var(--inksoft); max-width: 380px; }
+.starters { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; margin-top: 8px; }
+.starters button {
+  height: 36px;
+  padding: 0 14px;
+  border-radius: 99px;
+  border: 1px solid var(--line);
+  background: var(--paper);
+  font-size: 13px;
+  font-weight: 600;
+}
+.starters button:hover { border-color: var(--ink); }
+.bubble {
+  max-width: min(640px, 86%);
+  padding: 12px 16px;
+  border-radius: 16px;
+  border: 1px solid var(--line);
+  background: var(--paper);
+  box-shadow: var(--sh-sm);
+}
+.bubble p { font-size: 14px; white-space: pre-wrap; }
+.bubble.me { margin-left: auto; background: var(--ink); color: #fff; border-color: var(--ink); }
+.bubblelabel {
+  display: block;
+  margin-bottom: 4px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--inksoft);
+}
+.bubble.me .bubblelabel { color: rgba(255, 255, 255, 0.72); }
+.pdfchip {
+  display: inline-flex;
+  margin-bottom: 8px;
+  padding: 4px 10px;
+  border-radius: 8px;
+  background: var(--bone);
+  font-size: 12px;
+  font-weight: 700;
+}
+.bubble.me .pdfchip { background: rgba(255, 255, 255, 0.14); }
+.agentcompose {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 40px 24px;
+  border-top: 1px solid var(--line);
+  background: rgba(243, 244, 241, 0.92);
+}
+.agentrow { display: flex; gap: 10px; align-items: flex-end; }
+.agentrow textarea {
+  flex: 1;
+  min-height: 52px;
+  max-height: 160px;
+  resize: none;
+  padding: 14px 16px;
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  background: var(--paper);
+}
+.agentrow textarea:focus { outline: none; border-color: var(--ink); box-shadow: 0 0 0 1px var(--ink); }
+.attach {
+  height: 48px;
+  padding: 0 14px;
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  background: var(--paper);
+  font-size: 13px;
+  font-weight: 700;
+}
+.pendingfile { display: flex; align-items: center; gap: 10px; font-size: 13px; font-weight: 600; }
+.pendingfile button { color: var(--coral); font-size: 12px; font-weight: 700; }
+.agentstatus { font-size: 13px; color: var(--inksoft); font-weight: 600; }
 
 @media (max-width: 1240px) {
   .grid3 { grid-template-columns: 1fr 1fr; }
@@ -287,12 +370,12 @@ td .sub { font-size: 12px; color: var(--inksoft); margin-top: 2px; }
 }
 @media (max-width: 1080px) {
   .side { width: 76px; }
-  .brand { padding: 0; align-items: center; }
-  .brand span, .nav a span, .nav .grp, .foot a span, .foot button span { display: none; }
-  .brand b { font-size: 0; letter-spacing: 0; margin: 0; }
-  .brand b::after { content: "T"; font-size: 22px; font-weight: 500; }
+  .brand { height: 76px; padding: 10px; justify-content: center; }
+  .brand .tierra-logo { width: 52px; }
+  .nav a span, .nav .grp, .foot a span, .foot button span { display: none; }
   .nav a, .foot a, .foot button { justify-content: center; padding: 12px; }
   .page, .topbar { padding-left: 20px; padding-right: 20px; }
+  .agentlog, .agentcompose { padding-left: 20px; padding-right: 20px; }
   .grid3 { grid-template-columns: 1fr; }
   .rel { grid-template-columns: 1fr; align-items: stretch; }
 }

@@ -7,6 +7,7 @@ export type NavItem = {
 
 export const navItems: NavItem[] = [
   { href: '/', label: 'Command Centre', icon: 'circles' },
+  { href: '/agent', label: 'Tierra Agent', icon: 'chat' },
   { href: '/my-day', label: 'My Day', icon: 'checks' },
   { href: '/approvals', label: 'Approvals', icon: 'seal' },
   { href: '/orders', label: 'Orders', icon: 'clipboard', group: 'Operations' },

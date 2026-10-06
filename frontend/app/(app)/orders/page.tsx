@@ -9,7 +9,7 @@ export default async function OrdersPage() {
       <div className="sechead">
         <div>
           <h3>Customer purchase orders</h3>
-          <p>Seeded orders and any purchase order created from a WhatsApp PDF</p>
+          <p>Seeded orders and purchase orders read from WhatsApp or Tierra Agent</p>
         </div>
         <span className="zid">Zone 1 · Book</span>
       </div>

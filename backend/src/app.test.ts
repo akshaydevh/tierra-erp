@@ -838,3 +838,118 @@ describe('tierra bot', () => {
     expect(ctx.evolution.sent[0]?.text).toContain('cannot decide')
   })
 })
+
+describe('tierra agent desk', () => {
+  let ctx: Awaited<ReturnType<typeof setup>>
+
+  beforeEach(async () => {
+    ctx = await setup()
+  })
+
+  function pdfFile(name = 'po.pdf') {
+    return new File([Buffer.from('%PDF-1.4 purchase order')], name, { type: 'application/pdf' })
+  }
+
+  async function postAgent(cookie: string, fields: { text?: string; file?: File }) {
+    const form = new FormData()
+    if (fields.text) form.set('text', fields.text)
+    if (fields.file) form.set('file', fields.file)
+    return ctx.app.request('/api/agent', {
+      method: 'POST',
+      headers: { cookie },
+      body: form,
+    })
+  }
+
+  const shortOrder: ExtractedPo = {
+    customerName: 'Beyond Snack',
+    poNumber: 'PO-SHORT',
+    poDate: null,
+    lines: [
+      {
+        description: 'Banana chips 80g',
+        quantity: 200,
+        unit: 'pouch',
+        buyerCode: 'BAN-80G',
+        price: null,
+      },
+    ],
+  }
+
+  it('answers a dashboard question without calling Evolution', async () => {
+    ctx.setJudged({ intent: 'dashboard_question', confidence: 1 })
+    const cookie = await login(ctx.app, 'alex.thomas@tierra.test')
+    const response = await postAgent(cookie, { text: 'How is stock?' })
+    expect(response.status).toBe(200)
+    const body = (await response.json()) as {
+      message: { role: string; text: string }
+      reply: { role: string; text: string }
+    }
+    expect(body.message).toMatchObject({ role: 'user', text: 'How is stock?' })
+    expect(body.reply.role).toBe('tierra')
+    expect(body.reply.text).toContain('Beyond Snack laminate')
+    expect(body.reply.text).not.toContain('Tierra Bot:')
+    expect(ctx.evolution.sent).toHaveLength(0)
+    expect(ctx.evolution.reactions).toHaveLength(0)
+    expect(ctx.lastJudge()?.speaker).toMatchObject({ name: 'Alex Thomas', role: 'admin' })
+    expect(ctx.lastJudge()?.chatKind).toBe('self')
+    expect(ctx.lastChat()?.snapshot).toBeTruthy()
+
+    const history = await ctx.app.request('/api/agent', { headers: { cookie } })
+    const listed = (await history.json()) as { messages: Array<{ role: string; text: string }> }
+    expect(listed.messages.map((message) => message.role)).toEqual(['user', 'tierra'])
+    expect(listed.messages[1]?.text).toContain('Beyond Snack laminate')
+  })
+
+  it('creates an order tagged desk from a purchase-order PDF', async () => {
+    const cookie = await login(ctx.app, 'joshy@tierra.test')
+    const response = await postAgent(cookie, { file: pdfFile() })
+    expect(response.status).toBe(200)
+    const body = (await response.json()) as {
+      message: { filename: string | null; text: string }
+      reply: { text: string }
+    }
+    expect(body.message.filename).toBe('po.pdf')
+    expect(body.reply.text).toContain('Created order')
+    expect(body.reply.text).toContain('PO-WA-1')
+    expect(body.reply.text).not.toContain('@')
+    expect(ctx.evolution.sent).toHaveLength(0)
+    expect(ctx.evolution.reactions).toHaveLength(0)
+    expect(ctx.store.orders.find((order) => order.poNumber === 'PO-WA-1')?.source).toBe('desk')
+  })
+
+  it('refuses an office confirmation and lets an admin confirm on their own desk', async () => {
+    ctx.setExtracted(shortOrder)
+    const office = await login(ctx.app, 'anju@tierra.test')
+    const held = await postAgent(office, { file: pdfFile('short.pdf') })
+    const heldBody = (await held.json()) as { reply: { text: string } }
+    expect(heldBody.reply.text).toContain('An admin can reply YES to confirm PO PO-SHORT.')
+    expect(ctx.store.orders.some((order) => order.poNumber === 'PO-SHORT')).toBe(false)
+
+    const refused = await postAgent(office, { text: 'YES' })
+    const refusedBody = (await refused.json()) as { reply: { text: string } }
+    expect(refusedBody.reply.text).toContain('Only an admin can confirm PO PO-SHORT.')
+    expect(ctx.store.orders.some((order) => order.poNumber === 'PO-SHORT')).toBe(false)
+
+    const admin = await login(ctx.app, 'alex.thomas@tierra.test')
+    await postAgent(admin, { file: pdfFile('short-admin.pdf') })
+    const confirmed = await postAgent(admin, { text: 'YES' })
+    const confirmedBody = (await confirmed.json()) as { reply: { text: string } }
+    expect(confirmedBody.reply.text).toContain('Created order')
+    expect(confirmedBody.reply.text).toContain('PO-SHORT')
+    expect(ctx.store.orders.find((order) => order.poNumber === 'PO-SHORT')?.source).toBe('desk')
+    expect(ctx.evolution.sent).toHaveLength(0)
+    expect(ctx.judgeCalls()).toBe(0)
+  })
+
+  it('rejects an empty send and a file that is not a PDF', async () => {
+    expect((await ctx.app.request('/api/agent')).status).toBe(401)
+    const cookie = await login(ctx.app, 'anju@tierra.test')
+    const empty = await postAgent(cookie, {})
+    expect(empty.status).toBe(400)
+    const png = new File([Buffer.from('png')], 'note.png', { type: 'image/png' })
+    const rejected = await postAgent(cookie, { text: 'see attached', file: png })
+    expect(rejected.status).toBe(400)
+    expect(ctx.store.orders.some((order) => order.source === 'desk')).toBe(false)
+  })
+})

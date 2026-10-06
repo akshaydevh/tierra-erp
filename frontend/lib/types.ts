@@ -12,7 +12,7 @@ export type OrderListItem = {
   poNumber: string
   customerName: string
   status: 'open' | 'closed'
-  source: 'seed' | 'whatsapp'
+  source: 'seed' | 'whatsapp' | 'desk'
   poDate: string | null
   lineCount: number
   createdAt: string

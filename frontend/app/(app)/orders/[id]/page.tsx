@@ -88,9 +88,11 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
                 <div className="stamp">
                   {order.procurement
                     ? `Banana procurement assigned to ${order.procurement.assigneeName}`
-                    : order.source === 'whatsapp'
-                      ? 'Accepted from the purchase-order PDF'
-                      : 'Seeded with the preview balances'}
+                    : order.source === 'desk'
+                      ? 'Accepted from Tierra Agent'
+                      : order.source === 'whatsapp'
+                        ? 'Accepted from the purchase-order PDF'
+                        : 'Seeded with the preview balances'}
                 </div>
               </div>
             </li>

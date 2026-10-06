@@ -2,6 +2,7 @@
 
 import { useRouter } from 'next/navigation'
 import { useState } from 'react'
+import { Logo } from '@/components/logo'
 
 export default function LoginPage() {
   const router = useRouter()
@@ -32,8 +33,7 @@ export default function LoginPage() {
   return (
     <main className="login">
       <div className="brandmark">
-        <h1>TIERRA</h1>
-        <p>Food India</p>
+        <Logo />
       </div>
       <form className="logincard" onSubmit={(event) => void submit(event)}>
         <div className="field">

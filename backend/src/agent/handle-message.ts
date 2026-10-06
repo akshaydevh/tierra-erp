@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import { bananaRequirement } from '../domain/banana'
 import { adminOnlyReply, confirmationChoice, declinedReply } from '../domain/confirm'
 import { availabilityMap, dashboardSnapshot } from '../domain/reads'
@@ -12,6 +13,7 @@ import {
   type ExtractedPo,
 } from '../domain/intake'
 import { PROCUREMENT_ASSIGNEE_ID, RAW_BANANA_ITEM_ID } from '../db/seed-data'
+import { DESK_THREAD_PREFIX } from '../db/types'
 import { CustomerInventory, StockShortError } from '../domain/inventory'
 import type { Store } from '../db/store'
 import { ExtractError } from './extract'
@@ -38,6 +40,30 @@ const NEED_PDF = 'Send the purchase-order PDF and Tierra Bot will read it.'
 const HERE = 'Tierra Bot is here.'
 const TIERRA_HEADER = '> 🧞‍♂️ Tierra Bot:'
 
+export type DeskContext = {
+  speaker: Person
+}
+
+export function deskThreadJid(userId: string): string {
+  return `${DESK_THREAD_PREFIX}${userId}`
+}
+
+export function isDeskThread(remoteJid: string): boolean {
+  return remoteJid.startsWith(DESK_THREAD_PREFIX)
+}
+
+export function isTierraReply(text: string): boolean {
+  return text.trim().startsWith(TIERRA_HEADER)
+}
+
+export function tierraReplyText(text: string): string {
+  return text
+    .replace(/^> 🧞‍♂️ Tierra Bot:\s*/u, '')
+    .replace(/^🧞‍♂️ Tierra Bot:\s*/u, '')
+    .replace(/^Tierra Bot:\s*/i, '')
+    .trim()
+}
+
 export function ensureTierraPrefix(text: string): string {
   const trimmed = text.trim()
   if (trimmed.startsWith(TIERRA_HEADER)) return trimmed
@@ -48,16 +74,30 @@ export function ensureTierraPrefix(text: string): string {
   return `${TIERRA_HEADER}\n\n${body}`
 }
 
+function mentionTargets(message: IncomingMessage, phones: string[]): string[] {
+  return isDeskThread(replyChatJid(message)) ? [] : phones
+}
+
 async function sendBotText(
   deps: AgentDeps,
   message: IncomingMessage,
   text: string,
   mentionPhones: string[] = [],
-): Promise<void> {
+): Promise<string> {
   const remoteJid = replyChatJid(message)
   const body = ensureTierraPrefix(text)
+  if (isDeskThread(remoteJid)) {
+    await deps.store.claimMessage({
+      evolutionMessageId: `desk-out-${randomUUID()}`,
+      remoteJid,
+      fromMe: true,
+      hasPdf: false,
+      body,
+    })
+    return body
+  }
   const sent = await deps.evolution.sendText(deliveryAddress(remoteJid), body, mentionPhones)
-  if (!sent.messageId) return
+  if (!sent.messageId) return body
   await deps.store.claimMessage({
     evolutionMessageId: sent.messageId,
     remoteJid,
@@ -65,6 +105,7 @@ async function sendBotText(
     hasPdf: false,
     body,
   })
+  return body
 }
 
 function pdfBuffer(message: IncomingMessage, downloaded: string | null): Buffer {
@@ -97,8 +138,8 @@ export async function processPersonalPdf(
   deps: AgentDeps,
   message: IncomingMessage,
   speaker: Person | null,
-): Promise<void> {
-  if (!message.pdf) return
+): Promise<string | null> {
+  if (!message.pdf) return null
   let content: Buffer | undefined
   let extracted: ExtractedPo
   try {
@@ -114,8 +155,7 @@ export async function processPersonalPdf(
         messageId: message.id,
       })
     }
-    await sendBotText(deps, message, withSender(error.message, speaker))
-    return
+    return sendBotText(deps, message, withSender(error.message, speaker))
   }
 
   const [customers, items, balances, lines, orders] = await Promise.all([
@@ -133,15 +173,13 @@ export async function processPersonalPdf(
     CustomerInventory.from(items, balances, customers),
   )
   if (decision.kind === 'no_inventory') {
-    await sendBotText(deps, message, withSender(noInventoryReply(decision.customerName), speaker))
-    return
+    return sendBotText(deps, message, withSender(noInventoryReply(decision.customerName), speaker))
   }
   if (decision.kind === 'unmatched_lines') {
-    await sendBotText(deps, message, withSender(lineFailureReply(decision.descriptions), speaker))
-    return
+    return sendBotText(deps, message, withSender(lineFailureReply(decision.descriptions), speaker))
   }
   if (decision.kind === 'short') {
-    if (!message.pdf) return
+    if (!message.pdf) return null
     const documentId = await deps.store.insertDocument({
       filename: message.pdf.fileName,
       mimeType: message.pdf.mimeType,
@@ -170,11 +208,10 @@ export async function processPersonalPdf(
     })
     const accounts = await deps.store.listAccountLinks()
     const joshy = accounts.find((account) => account.id === PROCUREMENT_ASSIGNEE_ID)
-    const mentionPhones = joshy?.phoneNumber ? [phoneDigits(joshy.phoneNumber)] : []
+    const mentionPhones = mentionTargets(message, joshy?.phoneNumber ? [phoneDigits(joshy.phoneNumber)] : [])
     const reply = shortStockReply(decision.poNumber, decision.shortages)
     const mentioned = mentionPhones.length > 0 ? reply.replace('Joshy', `Joshy @${mentionPhones[0]}`) : reply
-    await sendBotText(deps, message, withSender(mentioned, speaker), mentionPhones)
-    return
+    return sendBotText(deps, message, withSender(mentioned, speaker), mentionPhones)
   }
 
   const requirement = bananaRequirement(decision.lines)
@@ -184,6 +221,7 @@ export async function processPersonalPdf(
       poNumber: decision.poNumber,
       poDate: decision.poDate,
       lines: decision.lines,
+      remoteJid: replyChatJid(message),
       document: {
         filename: message.pdf.fileName,
         mimeType: message.pdf.mimeType,
@@ -204,7 +242,7 @@ export async function processPersonalPdf(
     })
     const accounts = await deps.store.listAccountLinks()
     const joshy = accounts.find((account) => account.id === PROCUREMENT_ASSIGNEE_ID)
-    const mentionPhones = joshy?.phoneNumber ? [phoneDigits(joshy.phoneNumber)] : []
+    const mentionPhones = mentionTargets(message, joshy?.phoneNumber ? [phoneDigits(joshy.phoneNumber)] : [])
     const reply = createdReply({
       orderId: created.id,
       poNumber: decision.poNumber,
@@ -217,10 +255,10 @@ export async function processPersonalPdf(
       mentionPhones.length > 0 && created.procurementOrderId
         ? reply.replace('Joshy', `Joshy @${mentionPhones[0]}`)
         : reply
-    await sendBotText(deps, message, withSender(mentioned, speaker), mentionPhones)
+    return sendBotText(deps, message, withSender(mentioned, speaker), mentionPhones)
   } catch (error) {
     if (!(error instanceof StockShortError)) throw error
-    await sendBotText(deps, message, withSender(shortReply(decision.poNumber, error.shortages), speaker))
+    return sendBotText(deps, message, withSender(shortReply(decision.poNumber, error.shortages), speaker))
   }
 }
 
@@ -228,20 +266,23 @@ export async function handleIncoming(
   deps: AgentDeps,
   message: IncomingMessage,
   chatKind: ChatKind,
-): Promise<void> {
-  await deps.evolution
-    .sendReaction(message.remoteJid, message.id, message.fromMe, READ_EMOJI)
-    .catch(() => undefined)
+  desk?: DeskContext,
+): Promise<string | null> {
+  if (!isDeskThread(message.remoteJid)) {
+    await deps.evolution
+      .sendReaction(message.remoteJid, message.id, message.fromMe, READ_EMOJI)
+      .catch(() => undefined)
+  }
 
   const [accounts, connection] = await Promise.all([
     deps.store.listAccountLinks(),
     deps.store.getWhatsapp(),
   ])
   const people = resolvePeople(message, chatKind, accounts, connection.phoneNumber)
+  const speaker = desk?.speaker ?? people.speaker
 
   if (message.pdf) {
-    await processPersonalPdf(deps, message, people.speaker)
-    return
+    return processPersonalPdf(deps, message, speaker)
   }
 
   const text = message.text?.trim() ?? ''
@@ -249,14 +290,12 @@ export async function handleIncoming(
   if (choice) {
     const pending = await deps.store.findAwaitingConfirmation(replyChatJid(message))
     if (pending) {
-      if (people.speaker?.role !== 'admin') {
-        await sendBotText(deps, message, withSender(adminOnlyReply(pending.poNumber), people.speaker))
-        return
+      if (speaker?.role !== 'admin') {
+        return sendBotText(deps, message, withSender(adminOnlyReply(pending.poNumber), speaker))
       }
       if (choice === 'no') {
         const declined = await deps.store.declinePendingOrder(pending.id)
-        await sendBotText(deps, message, withSender(declinedReply(declined?.poNumber ?? pending.poNumber), people.speaker))
-        return
+        return sendBotText(deps, message, withSender(declinedReply(declined?.poNumber ?? pending.poNumber), speaker))
       }
       const requirement = bananaRequirement(pending.lines)
       const created = await deps.store.confirmPendingOrder(
@@ -273,12 +312,11 @@ export async function handleIncoming(
           : null,
       )
       if (!created) {
-        await sendBotText(deps, message, withSender(declinedReply(pending.poNumber), people.speaker))
-        return
+        return sendBotText(deps, message, withSender(declinedReply(pending.poNumber), speaker))
       }
-      const accounts = await deps.store.listAccountLinks()
-      const joshy = accounts.find((account) => account.id === PROCUREMENT_ASSIGNEE_ID)
-      const mentionPhones = joshy?.phoneNumber ? [phoneDigits(joshy.phoneNumber)] : []
+      const linked = await deps.store.listAccountLinks()
+      const joshy = linked.find((account) => account.id === PROCUREMENT_ASSIGNEE_ID)
+      const mentionPhones = mentionTargets(message, joshy?.phoneNumber ? [phoneDigits(joshy.phoneNumber)] : [])
       const reply = createdReply({
         orderId: created.id,
         poNumber: created.poNumber,
@@ -291,15 +329,14 @@ export async function handleIncoming(
         mentionPhones.length > 0 && created.procurementOrderId
           ? reply.replace('Joshy', `Joshy @${mentionPhones[0]}`)
           : reply
-      await sendBotText(deps, message, withSender(mentioned, people.speaker), mentionPhones)
-      return
+      return sendBotText(deps, message, withSender(mentioned, speaker), mentionPhones)
     }
   }
   const quotedText = message.quotedText?.trim() || null
   const mustReply = chatKind === 'personal' || chatKind === 'self'
   if (!text && !quotedText) {
-    if (mustReply) await sendBotText(deps, message, HERE)
-    return
+    if (mustReply) return sendBotText(deps, message, HERE)
+    return null
   }
 
   let judged: JudgeResult
@@ -308,28 +345,25 @@ export async function handleIncoming(
       chatKind,
       text,
       quotedText,
-      speaker: people.speaker,
+      speaker,
       mentioned: people.mentioned,
     })
   } catch {
-    await sendBotText(deps, message, UNDECIDED)
-    return
+    return sendBotText(deps, message, UNDECIDED)
   }
 
   if (judged.intent === 'unconfigured') {
-    await sendBotText(deps, message, UNDECIDED)
-    return
+    return sendBotText(deps, message, UNDECIDED)
   }
   if (judged.intent === 'needs_pdf' && judged.confidence >= INTENT_CONFIDENCE_FLOOR) {
-    await sendBotText(deps, message, NEED_PDF)
-    return
+    return sendBotText(deps, message, NEED_PDF)
   }
   if (
     !mustReply &&
     judged.intent === 'ignore' &&
     judged.confidence >= INTENT_CONFIDENCE_FLOOR
   ) {
-    return
+    return null
   }
 
   const unsure = judged.confidence < INTENT_CONFIDENCE_FLOOR || judged.intent === 'ignore'
@@ -353,9 +387,9 @@ export async function handleIncoming(
     quotedText,
     snapshot,
     history,
-    speaker: people.speaker,
+    speaker,
     mentioned: people.mentioned,
     unsure,
   })
-  await sendBotText(deps, message, reply)
+  return sendBotText(deps, message, reply)
 }
