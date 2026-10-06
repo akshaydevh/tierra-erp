@@ -2,6 +2,7 @@ import { serve } from '@hono/node-server'
 import { drizzle } from 'drizzle-orm/postgres-js'
 import postgres from 'postgres'
 import { extractPurchaseOrder } from './agent/extract'
+import { createExtractTask } from './agent/extract-task'
 import { createJudge } from './agent/judge'
 import { createCompleteChat } from './agent/reply'
 import { createApp } from './app'
@@ -25,6 +26,7 @@ async function main() {
     evolution: new HttpEvolution(env),
     extractPurchaseOrder: (pdf) => extractPurchaseOrder(pdf, env),
     judgeIntent: createJudge(env),
+    extractTask: createExtractTask(env),
     completeChat: createCompleteChat(env),
     now: () => new Date(),
     webhookSecret: env.webhookSecret,

@@ -5,6 +5,7 @@ import { DEV_PASSWORD } from './db/seed-data'
 import { MemoryStore } from './db/memory'
 import { ExtractError } from './agent/extract'
 import type { JudgeInput, JudgeResult } from './agent/judge'
+import type { TaskExtraction } from './agent/extract-task'
 import type { ChatInput } from './agent/reply'
 import type { ExtractedPo } from './domain/intake'
 import type { EvolutionClient } from './whatsapp/evolution'
@@ -93,6 +94,12 @@ async function setup() {
   let lastJudge: JudgeInput | null = null
   let chatCalls = 0
   let lastChat: ChatInput | null = null
+  let taskDraft: TaskExtraction = {
+    title: null,
+    category: null,
+    assigneeName: null,
+    assigneeUnknown: false,
+  }
   const deps: AppDeps = {
     store,
     evolution,
@@ -107,6 +114,7 @@ async function setup() {
       if (judgeError) throw judgeError
       return judged
     },
+    extractTask: async () => taskDraft,
     completeChat: async (input) => {
       chatCalls += 1
       lastChat = input
@@ -144,6 +152,9 @@ async function setup() {
     lastJudge: () => lastJudge,
     chatCalls: () => chatCalls,
     lastChat: () => lastChat,
+    setTask(next: TaskExtraction) {
+      taskDraft = next
+    },
   }
 }
 
@@ -951,5 +962,90 @@ describe('tierra agent desk', () => {
     const rejected = await postAgent(cookie, { text: 'see attached', file: png })
     expect(rejected.status).toBe(400)
     expect(ctx.store.orders.some((order) => order.source === 'desk')).toBe(false)
+  })
+})
+
+describe('task board', () => {
+  let ctx: Awaited<ReturnType<typeof setup>>
+
+  beforeEach(async () => {
+    ctx = await setup()
+  })
+
+  it('rejects a task without a category and lists a valid one', async () => {
+    const cookie = await login(ctx.app, 'anju@tierra.test')
+    const missing = await ctx.app.request('/api/tasks', {
+      method: 'POST',
+      headers: { cookie, 'content-type': 'application/json' },
+      body: JSON.stringify({ title: 'File the invoices', assigneeId: null }),
+    })
+    expect(missing.status).toBe(400)
+    expect(ctx.store.tasks).toHaveLength(0)
+
+    const created = await ctx.app.request('/api/tasks', {
+      method: 'POST',
+      headers: { cookie, 'content-type': 'application/json' },
+      body: JSON.stringify({ title: 'File the invoices', category: 'administration', assigneeId: 'usr_joshy' }),
+    })
+    expect(created.status).toBe(201)
+    const listed = await ctx.app.request('/api/tasks', { headers: { cookie } })
+    const body = (await listed.json()) as {
+      tasks: Array<{ title: string; category: string; assigneeName: string | null; status: string }>
+    }
+    expect(body.tasks).toEqual([
+      expect.objectContaining({
+        title: 'File the invoices',
+        category: 'administration',
+        assigneeName: 'Joshy',
+        status: 'todo',
+      }),
+    ])
+  })
+
+  it('adds an assigned task from chat', async () => {
+    ctx.setJudged({ intent: 'create_task', confidence: 0.9 })
+    ctx.setTask({
+      title: 'Call the banana supplier',
+      category: 'procurement',
+      assigneeName: 'Anju',
+      assigneeUnknown: false,
+    })
+    const cookie = await login(ctx.app, 'joshy@tierra.test')
+    const form = new FormData()
+    form.set('text', 'Add a procurement task for Anju to call the banana supplier')
+    const response = await ctx.app.request('/api/agent', { method: 'POST', headers: { cookie }, body: form })
+    expect(response.status).toBe(200)
+    const body = (await response.json()) as { reply: { text: string } }
+    expect(body.reply.text).toContain('Call the banana supplier')
+    expect(body.reply.text).toContain('Anju')
+    expect(ctx.store.tasks).toEqual([
+      expect.objectContaining({
+        title: 'Call the banana supplier',
+        category: 'procurement',
+        assigneeId: 'usr_anju',
+        assigneeName: 'Anju',
+        createdBy: 'usr_joshy',
+        status: 'todo',
+      }),
+    ])
+    expect(ctx.chatCalls()).toBe(0)
+  })
+
+  it('does not add a task when the assignee is unknown', async () => {
+    ctx.setJudged({ intent: 'create_task', confidence: 0.9 })
+    ctx.setTask({
+      title: 'Call the banana supplier',
+      category: 'procurement',
+      assigneeName: 'Ravi',
+      assigneeUnknown: true,
+    })
+    const cookie = await login(ctx.app, 'joshy@tierra.test')
+    const form = new FormData()
+    form.set('text', 'Assign the supplier call to Ravi')
+    const response = await ctx.app.request('/api/agent', { method: 'POST', headers: { cookie }, body: form })
+    expect(response.status).toBe(200)
+    const body = (await response.json()) as { reply: { text: string } }
+    expect(body.reply.text).toContain('could not match')
+    expect(ctx.store.tasks).toHaveLength(0)
   })
 })

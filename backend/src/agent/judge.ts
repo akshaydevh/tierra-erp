@@ -2,7 +2,7 @@ import { TypeSafeClient, choice } from '@typesafe-ai/sdk'
 import type { Person } from '../whatsapp/people'
 import type { ChatKind } from '../whatsapp/parse'
 
-export type Intent = 'dashboard_question' | 'conversation' | 'needs_pdf' | 'ignore'
+export type Intent = 'dashboard_question' | 'conversation' | 'needs_pdf' | 'create_task' | 'ignore'
 
 export type JudgeInput = {
   chatKind: ChatKind
@@ -20,9 +20,10 @@ export type JudgeResult = {
 export type Judge = (input: JudgeInput) => Promise<JudgeResult>
 
 const INTENT_CRITERIA = {
-  dashboard_question: 'The sender is asking about orders, stock, customers, or the command centre.',
+  dashboard_question: 'The sender is asking about orders, stock, customers, tasks, or the command centre.',
   conversation: 'A normal reply is enough and no records are required.',
   needs_pdf: 'They want an order created or checked, and this message has no purchase-order PDF.',
+  create_task: 'They want a task added to the board, or a person assigned to a new task.',
   ignore: 'There is nothing for Tierra Bot to do.',
 } as const
 
@@ -40,7 +41,7 @@ export function createJudge(env: { typesafeApiKey: string }): Judge {
       },
       questions: {
         intent: choice(
-          'What should Tierra Bot do with this WhatsApp message? The speaker and mentioned fields name Tierra accounts when a phone number is linked; use that identity as context. dashboard_question means the sender is asking about orders, stock, customers, or the command centre. conversation means a normal reply that does not need records. needs_pdf means they want an order created or checked but this message has no purchase-order PDF. ignore means there is nothing to do.',
+          'What should Tierra Bot do with this WhatsApp message? The speaker and mentioned fields name Tierra accounts when a phone number is linked; use that identity as context. dashboard_question means the sender is asking about orders, stock, customers, tasks, or the command centre. conversation means a normal reply that does not need records. needs_pdf means they want an order created or checked but this message has no purchase-order PDF. create_task means they want a task added to the board or assigned to someone. ignore means there is nothing to do.',
           INTENT_CRITERIA,
         ),
       },

@@ -16,7 +16,9 @@ import { PROCUREMENT_ASSIGNEE_ID, RAW_BANANA_ITEM_ID } from '../db/seed-data'
 import { DESK_THREAD_PREFIX } from '../db/types'
 import { CustomerInventory, StockShortError } from '../domain/inventory'
 import type { Store } from '../db/store'
+import type { AccountLink } from '../db/types'
 import { ExtractError } from './extract'
+import type { TaskExtraction, TaskExtractInput } from './extract-task'
 import type { JudgeInput, JudgeResult } from './judge'
 import type { ChatInput, ChatTurn } from './reply'
 import type { EvolutionClient } from '../whatsapp/evolution'
@@ -29,6 +31,7 @@ export type AgentDeps = {
   evolution: EvolutionClient
   extractPurchaseOrder: (pdf: Buffer) => Promise<ExtractedPo>
   judgeIntent: (input: JudgeInput) => Promise<JudgeResult>
+  extractTask: (input: TaskExtractInput) => Promise<TaskExtraction>
   completeChat: (input: ChatInput) => Promise<string>
 }
 
@@ -37,6 +40,11 @@ const READ_EMOJI = '👀'
 const INTENT_CONFIDENCE_FLOOR = 0.5
 const UNDECIDED = 'Tierra Bot cannot decide yet.'
 const NEED_PDF = 'Send the purchase-order PDF and Tierra Bot will read it.'
+const NEED_CATEGORY =
+  'Which category should this task use? Administration, operations, quality, procurement, production, dispatch, or finance.'
+const UNKNOWN_ASSIGNEE = 'I could not match that person to a Tierra account, so no task was added.'
+const NEED_TITLE = 'What should the task be called?'
+const NEED_ACCOUNT = 'A Tierra account has to add the task.'
 const HERE = 'Tierra Bot is here.'
 const TIERRA_HEADER = '> 🧞‍♂️ Tierra Bot:'
 
@@ -72,6 +80,16 @@ export function ensureTierraPrefix(text: string): string {
     .replace(/^🧞‍♂️ Tierra Bot:\s*/u, '')
     .replace(/^Tierra Bot:\s*/i, '')
   return `${TIERRA_HEADER}\n\n${body}`
+}
+
+function accountNamed(accounts: AccountLink[], name: string): AccountLink | undefined {
+  const needle = name.trim().toLowerCase()
+  return accounts.find((account) => account.name.toLowerCase() === needle)
+}
+
+function taskReply(title: string, category: string, assigneeName: string | null): string {
+  if (assigneeName) return `Added "${title}" under ${category}, assigned to ${assigneeName}.`
+  return `Added "${title}" under ${category}. It is unassigned.`
 }
 
 function mentionTargets(message: IncomingMessage, phones: string[]): string[] {
@@ -364,6 +382,34 @@ export async function handleIncoming(
     judged.confidence >= INTENT_CONFIDENCE_FLOOR
   ) {
     return null
+  }
+
+  if (judged.intent === 'create_task' && judged.confidence >= INTENT_CONFIDENCE_FLOOR) {
+    const creator = speaker ? accountNamed(accounts, speaker.name) : undefined
+    if (!creator) return sendBotText(deps, message, withSender(NEED_ACCOUNT, speaker))
+    let draft: TaskExtraction
+    try {
+      draft = await deps.extractTask({
+        text,
+        quotedText,
+        accountNames: accounts.map((account) => account.name),
+      })
+    } catch {
+      return sendBotText(deps, message, UNDECIDED)
+    }
+    if (!draft.category) return sendBotText(deps, message, withSender(NEED_CATEGORY, speaker))
+    if (!draft.title?.trim()) return sendBotText(deps, message, withSender(NEED_TITLE, speaker))
+    const assignee = draft.assigneeName ? accountNamed(accounts, draft.assigneeName) : undefined
+    if (draft.assigneeUnknown || (draft.assigneeName && !assignee)) {
+      return sendBotText(deps, message, withSender(UNKNOWN_ASSIGNEE, speaker))
+    }
+    const created = await deps.store.createTask({
+      title: draft.title,
+      category: draft.category,
+      assigneeId: assignee?.id ?? null,
+      createdBy: creator.id,
+    })
+    return sendBotText(deps, message, withSender(taskReply(created.title, created.category, created.assigneeName), speaker))
   }
 
   const unsure = judged.confidence < INTENT_CONFIDENCE_FLOOR || judged.intent === 'ignore'

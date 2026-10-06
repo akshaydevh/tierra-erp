@@ -1,4 +1,5 @@
 import Link from 'next/link'
+import { TaskBoard } from './task-board'
 import { api } from '@/lib/api'
 import type { CommandCentre } from '@/lib/types'
 
@@ -37,6 +38,16 @@ export default async function CommandCentrePage() {
           <div className="val">{whatsappLabel(data.whatsapp.status)}</div>
           <div className="stamp">{data.whatsapp.phoneNumber ?? 'Not linked'}</div>
         </article>
+      </section>
+      <section className="sec">
+        <div className="sechead">
+          <div>
+            <h3>Task board</h3>
+            <p>Add work, give it a category, and assign it. Drag a card to move it.</p>
+          </div>
+          <span className="zid">Zone 1 · Tasks</span>
+        </div>
+        <TaskBoard />
       </section>
       <section className="sec">
         <div className="sechead">

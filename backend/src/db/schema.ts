@@ -236,6 +236,28 @@ export const accountRelations = pgTable('account_relations', {
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 })
 
+export const tasks = pgTable(
+  'tasks',
+  {
+    id: text('id').primaryKey(),
+    title: text('title').notNull(),
+    category: text('category').notNull(),
+    status: text('status').notNull().default('todo'),
+    assigneeId: text('assignee_id').references(() => users.id),
+    createdBy: text('created_by')
+      .notNull()
+      .references(() => users.id),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    check(
+      'tasks_category_check',
+      sql`${table.category} in ('administration', 'operations', 'quality', 'procurement', 'production', 'dispatch', 'finance')`,
+    ),
+    check('tasks_status_check', sql`${table.status} in ('todo', 'doing', 'done')`),
+  ],
+)
+
 export const whatsappMessages = pgTable('whatsapp_messages', {
   id: text('id').primaryKey(),
   evolutionMessageId: text('evolution_message_id').notNull().unique(),

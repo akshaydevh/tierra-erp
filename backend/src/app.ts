@@ -12,7 +12,7 @@ import {
 import { PDF_BYTE_LIMIT, listDeskMessages, postDeskTurn } from './agent/desk'
 import type { AgentDeps } from './agent/handle-message'
 import { commandCentre, inventoryRows, orderDetail, orderList } from './domain/reads'
-import type { PublicUser } from './db/types'
+import { TASK_CATEGORIES, type PublicUser, type TaskCategory } from './db/types'
 import { acceptWebhook } from './whatsapp/accept'
 import { phonesMatch } from './whatsapp/people'
 import { phoneDigits } from './whatsapp/qr'
@@ -32,6 +32,22 @@ const relationSchema = z.object({
   userId: z.string().min(1),
   phoneNumber: z.string(),
 })
+
+const taskCategorySchema = z.enum(TASK_CATEGORIES)
+const taskStatusSchema = z.enum(['todo', 'doing', 'done'])
+
+const createTaskSchema = z.object({
+  title: z.string().trim().min(1),
+  category: taskCategorySchema,
+  assigneeId: z.string().min(1).nullable(),
+})
+
+const patchTaskSchema = z
+  .object({
+    status: taskStatusSchema.optional(),
+    assigneeId: z.string().min(1).nullable().optional(),
+  })
+  .refine((value) => value.status !== undefined || value.assigneeId !== undefined)
 
 function publicConnection(connection: {
   status: string
@@ -115,6 +131,55 @@ export function createApp(deps: AppDeps) {
   app.get('/api/inventory', async (c) => c.json({ items: await inventoryRows(deps.store) }))
   app.get('/api/production', async (c) => c.json({ entries: await deps.store.listProductionEntries() }))
   app.get('/api/procurement', async (c) => c.json({ orders: await deps.store.listProcurementOrders() }))
+
+  app.get('/api/tasks', async (c) => {
+    const [tasks, accounts] = await Promise.all([deps.store.listTasks(), deps.store.listAccountLinks()])
+    return c.json({ tasks, accounts })
+  })
+
+  app.post('/api/tasks', async (c) => {
+    const user = await userFrom(c.req.header('cookie'))
+    if (!user) return c.json({ error: 'Unauthorized' }, 401)
+    const parsed = createTaskSchema.safeParse(await c.req.json().catch(() => null))
+    if (!parsed.success) return c.json({ error: 'Enter a title and choose a category' }, 400)
+    if (parsed.data.assigneeId) {
+      const accounts = await deps.store.listAccountLinks()
+      if (!accounts.some((account) => account.id === parsed.data.assigneeId)) {
+        return c.json({ error: 'That account does not exist' }, 400)
+      }
+    }
+    const task = await deps.store.createTask({
+      title: parsed.data.title,
+      category: parsed.data.category satisfies TaskCategory,
+      assigneeId: parsed.data.assigneeId,
+      createdBy: user.id,
+    })
+    return c.json({ task }, 201)
+  })
+
+  app.patch('/api/tasks/:id', async (c) => {
+    const parsed = patchTaskSchema.safeParse(await c.req.json().catch(() => null))
+    if (!parsed.success) return c.json({ error: 'Choose a status or an assignee' }, 400)
+    if (parsed.data.assigneeId) {
+      const accounts = await deps.store.listAccountLinks()
+      if (!accounts.some((account) => account.id === parsed.data.assigneeId)) {
+        return c.json({ error: 'That account does not exist' }, 400)
+      }
+    }
+    const id = c.req.param('id')
+    if (parsed.data.status) {
+      const updated = await deps.store.updateTaskStatus(id, parsed.data.status)
+      if (!updated) return c.json({ error: 'Task not found' }, 404)
+    }
+    if (parsed.data.assigneeId !== undefined) {
+      const updated = await deps.store.updateTaskAssignee(id, parsed.data.assigneeId)
+      if (!updated) return c.json({ error: 'Task not found' }, 404)
+      return c.json({ task: updated })
+    }
+    const task = (await deps.store.listTasks()).find((row) => row.id === id)
+    if (!task) return c.json({ error: 'Task not found' }, 404)
+    return c.json({ task })
+  })
 
   app.get('/api/agent', async (c) => {
     const user = await userFrom(c.req.header('cookie'))

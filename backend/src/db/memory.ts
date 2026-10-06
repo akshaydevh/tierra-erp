@@ -18,6 +18,9 @@ import type {
   PublicUser,
   Role,
   StoredDocument,
+  TaskCategory,
+  TaskRecord,
+  TaskStatus,
   User,
   WhatsappConnection,
 } from './types'
@@ -56,6 +59,7 @@ export class MemoryStore implements Store {
   pending: PendingRow[] = []
   documents: DocumentRow[] = []
   messages: MessageRow[] = []
+  tasks: TaskRecord[] = []
   relations: Array<{ userId: string; phoneNumber: string }> = []
   whatsapp: WhatsappConnection = {
     instanceName: 'tierra',
@@ -429,5 +433,47 @@ export class MemoryStore implements Store {
       createdAt,
     })
     return { id, productionEntryId, procurementOrderId }
+  }
+
+  async listTasks(): Promise<TaskRecord[]> {
+    return [...this.tasks].sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+  }
+
+  async createTask(input: {
+    title: string
+    category: TaskCategory
+    assigneeId: string | null
+    createdBy: string
+  }): Promise<TaskRecord> {
+    const assignee = input.assigneeId ? this.users.find((user) => user.id === input.assigneeId) : undefined
+    const task: TaskRecord = {
+      id: newId('tsk'),
+      title: input.title.trim(),
+      category: input.category,
+      status: 'todo',
+      assigneeId: assignee?.id ?? null,
+      assigneeName: assignee?.name ?? null,
+      createdBy: input.createdBy,
+      createdAt: new Date().toISOString(),
+    }
+    this.tasks.push(task)
+    return task
+  }
+
+  async updateTaskStatus(id: string, status: TaskStatus): Promise<TaskRecord | null> {
+    const task = this.tasks.find((row) => row.id === id)
+    if (!task) return null
+    task.status = status
+    return task
+  }
+
+  async updateTaskAssignee(id: string, assigneeId: string | null): Promise<TaskRecord | null> {
+    const task = this.tasks.find((row) => row.id === id)
+    if (!task) return null
+    const assignee = assigneeId ? this.users.find((user) => user.id === assigneeId) : undefined
+    if (assigneeId && !assignee) return null
+    task.assigneeId = assignee?.id ?? null
+    task.assigneeName = assignee?.name ?? null
+    return task
   }
 }

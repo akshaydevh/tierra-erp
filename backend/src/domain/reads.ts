@@ -10,6 +10,7 @@ import type {
   OrderRecord,
   ProcurementOrderRecord,
   ProductionEntryRecord,
+  TaskRecord,
   WhatsappConnection,
 } from '../db/types'
 
@@ -119,16 +120,18 @@ export type DashboardSnapshot = {
     lines: DashboardOrderLine[]
   }>
   inventory: InventoryRow[]
+  tasks: Array<Pick<TaskRecord, 'title' | 'category' | 'status' | 'assigneeName'>>
   emptyModules: string[]
 }
 
 export async function dashboardSnapshot(store: Store): Promise<DashboardSnapshot> {
-  const [centre, customers, orders, lines, inventory] = await Promise.all([
+  const [centre, customers, orders, lines, inventory, tasks] = await Promise.all([
     commandCentre(store),
     store.listCustomers(),
     store.listOrders(),
     store.listOrderLines(),
     inventoryRows(store),
+    store.listTasks(),
   ])
   return {
     commandCentre: centre,
@@ -152,6 +155,14 @@ export async function dashboardSnapshot(store: Store): Promise<DashboardSnapshot
         })),
     })),
     inventory,
+    tasks: tasks
+      .filter((task) => task.status !== 'done')
+      .map((task) => ({
+        title: task.title,
+        category: task.category,
+        status: task.status,
+        assigneeName: task.assigneeName,
+      })),
     emptyModules: [...EMPTY_DASHBOARD_MODULES],
   }
 }

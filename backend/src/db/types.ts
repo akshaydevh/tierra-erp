@@ -9,6 +9,40 @@ export function orderSourceForThread(remoteJid: string): 'whatsapp' | 'desk' {
 }
 export type WhatsappStatus = 'disconnected' | 'qr_pending' | 'connected'
 
+export const TASK_CATEGORIES = [
+  'administration',
+  'operations',
+  'quality',
+  'procurement',
+  'production',
+  'dispatch',
+  'finance',
+] as const
+
+export type TaskCategory = (typeof TASK_CATEGORIES)[number]
+export type TaskStatus = 'todo' | 'doing' | 'done'
+
+export function asTaskCategory(value: string): TaskCategory {
+  if ((TASK_CATEGORIES as readonly string[]).includes(value)) return value as TaskCategory
+  throw new Error(`Unknown task category ${value}`)
+}
+
+export function asTaskStatus(value: string): TaskStatus {
+  if (value === 'todo' || value === 'doing' || value === 'done') return value
+  throw new Error(`Unknown task status ${value}`)
+}
+
+export type TaskRecord = {
+  id: string
+  title: string
+  category: TaskCategory
+  status: TaskStatus
+  assigneeId: string | null
+  assigneeName: string | null
+  createdBy: string
+  createdAt: string
+}
+
 export type User = {
   id: string
   email: string

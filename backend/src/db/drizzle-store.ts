@@ -20,11 +20,14 @@ import type {
   PublicUser,
   Role,
   StoredDocument,
+  TaskCategory,
+  TaskRecord,
+  TaskStatus,
   User,
   WhatsappConnection,
   WhatsappStatus,
 } from './types'
-import { asItemKind, orderSourceForThread, toPublicUser } from './types'
+import { asItemKind, asTaskCategory, asTaskStatus, orderSourceForThread, toPublicUser } from './types'
 
 type Database = PostgresJsDatabase<typeof schema>
 
@@ -614,5 +617,73 @@ export class DrizzleStore implements Store {
       })
       return { id, productionEntryId, procurementOrderId }
     })
+  }
+
+  async listTasks(): Promise<TaskRecord[]> {
+    const assignee = alias(schema.users, 'task_assignee')
+    const rows = await this.db
+      .select({
+        id: schema.tasks.id,
+        title: schema.tasks.title,
+        category: schema.tasks.category,
+        status: schema.tasks.status,
+        assigneeId: schema.tasks.assigneeId,
+        assigneeName: assignee.name,
+        createdBy: schema.tasks.createdBy,
+        createdAt: schema.tasks.createdAt,
+      })
+      .from(schema.tasks)
+      .leftJoin(assignee, eq(assignee.id, schema.tasks.assigneeId))
+      .orderBy(desc(schema.tasks.createdAt))
+    return rows.map((row) => ({
+      id: row.id,
+      title: row.title,
+      category: asTaskCategory(row.category),
+      status: asTaskStatus(row.status),
+      assigneeId: row.assigneeId,
+      assigneeName: row.assigneeName,
+      createdBy: row.createdBy,
+      createdAt: row.createdAt.toISOString(),
+    }))
+  }
+
+  async createTask(input: {
+    title: string
+    category: TaskCategory
+    assigneeId: string | null
+    createdBy: string
+  }): Promise<TaskRecord> {
+    const id = newId('tsk')
+    await this.db.insert(schema.tasks).values({
+      id,
+      title: input.title.trim(),
+      category: input.category,
+      status: 'todo',
+      assigneeId: input.assigneeId,
+      createdBy: input.createdBy,
+    })
+    const created = (await this.listTasks()).find((task) => task.id === id)
+    if (!created) throw new Error('Task was not saved')
+    return created
+  }
+
+  async updateTaskStatus(id: string, status: TaskStatus): Promise<TaskRecord | null> {
+    const updated = await this.db
+      .update(schema.tasks)
+      .set({ status })
+      .where(eq(schema.tasks.id, id))
+      .returning({ id: schema.tasks.id })
+    if (updated.length === 0) return null
+    return (await this.listTasks()).find((task) => task.id === id) ?? null
+  }
+
+  async updateTaskAssignee(id: string, assigneeId: string | null): Promise<TaskRecord | null> {
+    const updated = await this.db
+      .update(schema.tasks)
+      .set({ assigneeId })
+      .where(eq(schema.tasks.id, id))
+      .returning({ id: schema.tasks.id })
+    if (updated.length === 0) return null
+    return (await this.listTasks()).find((task) => task.id === id) ?? null
   }
 }

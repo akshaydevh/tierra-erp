@@ -14,6 +14,9 @@ import type {
   ProductionPlan,
   PublicUser,
   StoredDocument,
+  TaskCategory,
+  TaskRecord,
+  TaskStatus,
   User,
   WhatsappConnection,
   WhatsappStatus,
@@ -92,4 +95,14 @@ export interface Store {
     production: ProductionPlan | null,
   ): Promise<{ id: string; poNumber: string; productionEntryId: string | null; procurementOrderId: string | null } | null>
   declinePendingOrder(id: string): Promise<{ poNumber: string } | null>
+
+  listTasks(): Promise<TaskRecord[]>
+  createTask(input: {
+    title: string
+    category: TaskCategory
+    assigneeId: string | null
+    createdBy: string
+  }): Promise<TaskRecord>
+  updateTaskStatus(id: string, status: TaskStatus): Promise<TaskRecord | null>
+  updateTaskAssignee(id: string, assigneeId: string | null): Promise<TaskRecord | null>
 }

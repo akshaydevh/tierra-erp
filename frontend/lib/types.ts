@@ -95,3 +95,43 @@ export type CommandCentre = {
   whatsapp: { status: WhatsappConnection['status']; phoneNumber: string | null }
   recentOrders: OrderListItem[]
 }
+
+export const TASK_CATEGORIES = [
+  'administration',
+  'operations',
+  'quality',
+  'procurement',
+  'production',
+  'dispatch',
+  'finance',
+] as const
+
+export type TaskCategory = (typeof TASK_CATEGORIES)[number]
+export type TaskStatus = 'todo' | 'doing' | 'done'
+
+export type Task = {
+  id: string
+  title: string
+  category: TaskCategory
+  status: TaskStatus
+  assigneeId: string | null
+  assigneeName: string | null
+  createdBy: string
+  createdAt: string
+}
+
+export const TASK_CATEGORY_LABELS: Record<TaskCategory, string> = {
+  administration: 'Administration',
+  operations: 'Operations',
+  quality: 'Quality',
+  procurement: 'Procurement',
+  production: 'Production',
+  dispatch: 'Dispatch',
+  finance: 'Finance',
+}
+
+export const TASK_STATUS_LABELS: Record<TaskStatus, string> = {
+  todo: 'To do',
+  doing: 'In progress',
+  done: 'Done',
+}
