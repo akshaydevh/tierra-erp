@@ -1,6 +1,9 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
+import ReactMarkdown from 'react-markdown'
+import remarkBreaks from 'remark-breaks'
+import remarkGfm from 'remark-gfm'
 
 type AgentMessage = {
   id: string
@@ -8,6 +11,42 @@ type AgentMessage = {
   text: string
   filename: string | null
   createdAt: string
+}
+
+function safeHref(href: string | undefined): string | undefined {
+  if (!href) return undefined
+  if (href.startsWith('/') && !href.startsWith('//')) return href
+  try {
+    const url = new URL(href)
+    if (url.protocol === 'http:' || url.protocol === 'https:') return url.href
+  } catch {
+    return undefined
+  }
+  return undefined
+}
+
+function MessageText({ text }: { text: string }) {
+  return (
+    <div className="md">
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm, remarkBreaks]}
+        components={{
+          a: ({ href, children }) => {
+            const safe = safeHref(href)
+            if (!safe) return <span>{children}</span>
+            return (
+              <a href={safe} target="_blank" rel="noreferrer">
+                {children}
+              </a>
+            )
+          },
+          img: ({ alt }) => (alt ? <span>{alt}</span> : null),
+        }}
+      >
+        {text}
+      </ReactMarkdown>
+    </div>
+  )
 }
 
 const starters = [
@@ -124,7 +163,7 @@ export function AgentChat() {
           <article key={message.id} className={message.role === 'user' ? 'bubble me' : 'bubble'}>
             <span className="bubblelabel">{message.role === 'user' ? 'You' : 'Tierra Agent'}</span>
             {message.filename ? <div className="pdfchip">{message.filename}</div> : null}
-            {message.text ? <p>{message.text}</p> : null}
+            {message.text ? <MessageText text={message.text} /> : null}
           </article>
         ))}
       </div>
