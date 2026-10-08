@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { and, asc, desc, eq, gt, inArray, lt, lte, ne, sql, type SQL } from 'drizzle-orm'
+import { and, asc, desc, eq, gt, inArray, isNotNull, isNull, lt, lte, ne, sql, type SQL } from 'drizzle-orm'
 import { alias } from 'drizzle-orm/pg-core'
 import type { PostgresJsDatabase } from 'drizzle-orm/postgres-js'
 import * as schema from './schema'
@@ -189,6 +189,19 @@ export class DrizzleStore implements Store {
       if (isUniqueViolation(error, 'users_single_admin')) return 'admin_taken'
       throw error
     }
+  }
+
+  async transferAdmin(userId: string): Promise<'ok' | 'not_found'> {
+    return this.db.transaction(async (tx) => {
+      const [target] = await tx.select({ id: schema.users.id }).from(schema.users).where(eq(schema.users.id, userId))
+      if (!target) return 'not_found'
+      await tx
+        .update(schema.users)
+        .set({ role: 'manager' })
+        .where(and(eq(schema.users.role, 'admin'), ne(schema.users.id, userId)))
+      await tx.update(schema.users).set({ role: 'admin' }).where(eq(schema.users.id, userId))
+      return 'ok'
+    })
   }
 
   async listCustomers(): Promise<Customer[]> {
@@ -456,6 +469,15 @@ export class DrizzleStore implements Store {
       .where(eq(schema.whatsappMessages.evolutionMessageId, evolutionMessageId))
   }
 
+  async hasDocumentForMessage(messageId: string): Promise<boolean> {
+    const [row] = await this.db
+      .select({ id: schema.orderDocuments.id })
+      .from(schema.orderDocuments)
+      .where(eq(schema.orderDocuments.messageId, messageId))
+      .limit(1)
+    return Boolean(row)
+  }
+
   async insertDocument(input: StoredDocument & { messageId: string }): Promise<string> {
     const id = newId('doc')
     await this.db.insert(schema.orderDocuments).values({
@@ -578,30 +600,30 @@ export class DrizzleStore implements Store {
     return { id }
   }
 
-  async findAwaitingConfirmation(remoteJid: string): Promise<PendingConfirmation | null> {
+  async listAwaitingConfirmations(remoteJid: string): Promise<PendingConfirmation[]> {
     const pending = await this.db
       .select()
       .from(schema.pendingOrders)
       .where(and(eq(schema.pendingOrders.remoteJid, remoteJid), eq(schema.pendingOrders.status, 'awaiting_admin')))
-      .orderBy(desc(schema.pendingOrders.createdAt))
-      .limit(1)
-    const row = pending[0]
-    if (!row) return null
+      .orderBy(desc(schema.pendingOrders.createdAt), desc(schema.pendingOrders.id))
+    if (pending.length === 0) return []
     const lines = await this.db
       .select()
       .from(schema.pendingOrderLines)
-      .where(eq(schema.pendingOrderLines.pendingOrderId, row.id))
-    return {
+      .where(inArray(schema.pendingOrderLines.pendingOrderId, pending.map((row) => row.id)))
+    return pending.map((row) => ({
       id: row.id,
       poNumber: row.poNumber,
-      lines: lines.map((line) => ({
-        itemId: line.itemId,
-        description: line.description,
-        quantity: line.quantity,
-        unit: line.unit,
-        unitPrice: line.unitPrice,
-      })),
-    }
+      lines: lines
+        .filter((line) => line.pendingOrderId === row.id)
+        .map((line) => ({
+          itemId: line.itemId,
+          description: line.description,
+          quantity: line.quantity,
+          unit: line.unit,
+          unitPrice: line.unitPrice,
+        })),
+    }))
   }
 
   async confirmPendingOrder(
@@ -779,6 +801,7 @@ export class DrizzleStore implements Store {
       createdByName,
       createdAt: task.createdAt.toISOString(),
       completedAt: task.completedAt?.toISOString() ?? null,
+      assignedAt: task.assignedAt.toISOString(),
     }))
   }
 
@@ -794,6 +817,17 @@ export class DrizzleStore implements Store {
   async listOpenTasksForUser(userId: string): Promise<TaskRecord[]> {
     return this.selectTasks(
       and(eq(schema.tasks.assigneeId, userId), inArray(schema.tasks.status, ['todo', 'doing'])) as SQL,
+    )
+  }
+
+  async listUnnotifiedOpenTasks(): Promise<TaskRecord[]> {
+    return this.selectTasks(
+      and(
+        inArray(schema.tasks.status, ['todo', 'doing']),
+        isNotNull(schema.tasks.assigneeId),
+        ne(schema.tasks.kind, 'approval'),
+        isNull(schema.tasks.notifiedAt),
+      ) as SQL,
     )
   }
 
@@ -868,6 +902,21 @@ export class DrizzleStore implements Store {
     return this.getTask(id)
   }
 
+  async cancelTasksForSubject(subjectType: string, subjectId: string): Promise<number> {
+    const cancelled = await this.db
+      .update(schema.tasks)
+      .set({ status: 'cancelled' })
+      .where(
+        and(
+          eq(schema.tasks.subjectType, subjectType),
+          eq(schema.tasks.subjectId, subjectId),
+          inArray(schema.tasks.status, ['todo', 'doing']),
+        ),
+      )
+      .returning({ id: schema.tasks.id })
+    return cancelled.length
+  }
+
   async updateTaskAssignment(
     id: string,
     assignment: { assigneeId: string | null; assigneeRole: Role | null },
@@ -880,11 +929,43 @@ export class DrizzleStore implements Store {
         assigneeRole: assignment.assigneeRole,
         notifiedAt: sql`case when ${changed} then null else ${schema.tasks.notifiedAt} end`,
         waMessageId: sql`case when ${changed} then null else ${schema.tasks.waMessageId} end`,
+        assignedAt: sql`case when ${changed} then now() else ${schema.tasks.assignedAt} end`,
       })
       .where(eq(schema.tasks.id, id))
       .returning({ id: schema.tasks.id })
     if (updated.length === 0) return null
     return this.getTask(id)
+  }
+
+  async reserveTaskNotice(id: string, assigneeId: string): Promise<boolean> {
+    const reserved = await this.db
+      .update(schema.tasks)
+      .set({ notifiedAt: sql`now()` })
+      .where(and(eq(schema.tasks.id, id), eq(schema.tasks.assigneeId, assigneeId), isNull(schema.tasks.notifiedAt)))
+      .returning({ id: schema.tasks.id })
+    return reserved.length > 0
+  }
+
+  async releaseTaskNotice(id: string): Promise<void> {
+    await this.db
+      .update(schema.tasks)
+      .set({ notifiedAt: null })
+      .where(and(eq(schema.tasks.id, id), isNull(schema.tasks.waMessageId)))
+  }
+
+  async releaseStaleTaskNotices(before: Date): Promise<number> {
+    const released = await this.db
+      .update(schema.tasks)
+      .set({ notifiedAt: null })
+      .where(
+        and(
+          inArray(schema.tasks.status, ['todo', 'doing']),
+          isNull(schema.tasks.waMessageId),
+          lt(schema.tasks.notifiedAt, before),
+        ),
+      )
+      .returning({ id: schema.tasks.id })
+    return released.length
   }
 
   async markTaskNotified(id: string, waMessageId: string | null, at: Date): Promise<void> {
@@ -967,6 +1048,14 @@ export class DrizzleStore implements Store {
       .where(and(eq(schema.jobs.status, 'running'), lt(schema.jobs.lockedUntil, now)))
       .returning({ status: schema.jobs.status })
     return rows.filter((row) => row.status === 'queued').length
+  }
+
+  async pruneJobs(before: Date): Promise<number> {
+    const pruned = await this.db
+      .delete(schema.jobs)
+      .where(and(inArray(schema.jobs.status, ['done', 'failed', 'cancelled']), lt(schema.jobs.updatedAt, before)))
+      .returning({ id: schema.jobs.id })
+    return pruned.length
   }
 
   async getJob(id: string): Promise<JobRecord | null> {

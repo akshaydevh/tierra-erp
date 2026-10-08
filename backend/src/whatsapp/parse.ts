@@ -196,6 +196,24 @@ function embeddedBase64(container: Record<string, unknown>): string | null {
   return message ? stringOf(message.base64) : null
 }
 
+const MEDIA_KEYS = new Set(['base64', 'jpegThumbnail'])
+
+function stripMedia(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(stripMedia)
+  const row = record(value)
+  if (!row) return value
+  return Object.fromEntries(
+    Object.entries(row)
+      .filter(([key]) => !MEDIA_KEYS.has(key))
+      .map(([key, item]) => [key, stripMedia(item)]),
+  )
+}
+
+/** The message without embedded file bytes or thumbnails, for queueing. The PDF is downloaded again when needed. */
+export function withoutMedia(message: IncomingMessage): IncomingMessage {
+  return { ...message, embeddedBase64: null, raw: stripMedia(message.raw) }
+}
+
 function firstMessage(data: unknown): Record<string, unknown> | null {
   const row = record(data)
   if (row?.key) return row

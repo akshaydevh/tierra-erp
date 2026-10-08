@@ -55,6 +55,8 @@ export interface Store {
   deleteRelation(userId: string): Promise<void>
   /** Changes a user's role. There is only ever one admin: giving admin to a second user returns 'admin_taken'. */
   updateUserRole(userId: string, role: Role): Promise<'ok' | 'not_found' | 'admin_taken'>
+  /** Makes this user the admin and the current admin a manager, in one transaction. */
+  transferAdmin(userId: string): Promise<'ok' | 'not_found'>
 
   listCustomers(): Promise<Customer[]>
   listItems(): Promise<Item[]>
@@ -84,6 +86,8 @@ export interface Store {
   listRecentMessages(remoteJids: string[], limit: number): Promise<RecentMessage[]>
   listThread(remoteJid: string): Promise<ThreadMessage[]>
   releaseMessage(evolutionMessageId: string): Promise<void>
+  /** True when a PDF from this WhatsApp message was already stored, so the message was already handled. */
+  hasDocumentForMessage(messageId: string): Promise<boolean>
   insertDocument(input: StoredDocument & { messageId: string }): Promise<string>
   createOrder(input: {
     customerId: string
@@ -104,7 +108,8 @@ export interface Store {
     shortages: Array<{ itemId: string; quantity: number; unit: string }>
     assigneeId: string
   }): Promise<{ id: string }>
-  findAwaitingConfirmation(remoteJid: string): Promise<PendingConfirmation | null>
+  /** Held orders waiting for the admin's YES or NO in this chat, newest first. */
+  listAwaitingConfirmations(remoteJid: string): Promise<PendingConfirmation[]>
   confirmPendingOrder(
     id: string,
     production: ProductionPlan | null,
@@ -116,6 +121,8 @@ export interface Store {
   /** Open (todo/doing) tasks held by this user, newest first. */
   listOpenTasksForUser(userId: string): Promise<TaskRecord[]>
   findTaskByMessage(waMessageId: string): Promise<TaskRecord | null>
+  /** Open, assigned, non-approval tasks whose holder has not been sent a notice yet. */
+  listUnnotifiedOpenTasks(): Promise<TaskRecord[]>
   /**
    * Creates a task. When subjectType/subjectId are set, a second live task with the
    * same (subjectType, subjectId, kind) is not created: the existing one is returned.
@@ -123,10 +130,25 @@ export interface Store {
   createTask(input: NewTask): Promise<TaskRecord>
   /** Sets status; 'done' stamps completedAt, any other status clears it. */
   updateTaskStatus(id: string, status: TaskStatus): Promise<TaskRecord | null>
+  /** Sets status cancelled on the open (todo/doing) tasks about this subject. Returns how many. */
+  cancelTasksForSubject(subjectType: string, subjectId: string): Promise<number>
+  /** A new holder clears the notice and stamps assignedAt. */
   updateTaskAssignment(
     id: string,
     assignment: { assigneeId: string | null; assigneeRole: Role | null },
   ): Promise<TaskRecord | null>
+  /**
+   * Claims the right to send this task's notice: sets notifiedAt when the task is still held by
+   * assigneeId and has no notice. Returns false when someone else got there first.
+   */
+  reserveTaskNotice(id: string, assigneeId: string): Promise<boolean>
+  /** Undoes reserveTaskNotice after a failed send (only while no notice message is recorded). */
+  releaseTaskNotice(id: string): Promise<void>
+  /**
+   * Frees notices reserved before `before` that never recorded a message (the sender died
+   * mid-send), so they can be queued again. Returns how many.
+   */
+  releaseStaleTaskNotices(before: Date): Promise<number>
   markTaskNotified(id: string, waMessageId: string | null, at: Date): Promise<void>
 
   /** Returns null when a job with the same idempotencyKey already exists. */
@@ -140,7 +162,9 @@ export interface Store {
   completeJob(id: string): Promise<void>
   /** retryAt null marks the job failed for good; otherwise it is re-queued for retryAt. */
   failJob(id: string, error: string, retryAt: Date | null): Promise<void>
-  /** Re-queues running jobs whose lease expired. Returns how many. */
+  /** Re-queues running jobs whose lease expired, or fails them when no attempts are left. Returns how many were re-queued. */
   requeueExpiredJobs(now: Date): Promise<number>
+  /** Deletes done, failed and cancelled jobs last touched before `before`. Returns how many. */
+  pruneJobs(before: Date): Promise<number>
   getJob(id: string): Promise<JobRecord | null>
 }

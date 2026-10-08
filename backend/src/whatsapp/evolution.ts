@@ -1,6 +1,8 @@
 import { ownerPhoneFromInstances, qrFromPayload } from './qr'
 
 export const INSTANCE_NAME = 'tierra'
+const REQUEST_TIMEOUT_MS = 20_000
+const MEDIA_TIMEOUT_MS = 60_000
 
 export type DownloadedMedia = {
   base64: string
@@ -116,9 +118,10 @@ export class HttpEvolution implements EvolutionClient {
     }
   }
 
-  private async request(path: string, init?: RequestInit): Promise<unknown> {
+  private async request(path: string, init?: RequestInit, timeoutMs = REQUEST_TIMEOUT_MS): Promise<unknown> {
     const response = await fetch(`${this.env.evolutionUrl.replace(/\/$/, '')}${path}`, {
       ...init,
+      signal: AbortSignal.timeout(timeoutMs),
       headers: {
         apikey: this.env.evolutionApiKey,
         'content-type': 'application/json',
@@ -135,7 +138,11 @@ export class HttpEvolution implements EvolutionClient {
   async deleteInstance(): Promise<void> {
     const response = await fetch(
       `${this.env.evolutionUrl.replace(/\/$/, '')}/instance/delete/${INSTANCE_NAME}`,
-      { method: 'DELETE', headers: { apikey: this.env.evolutionApiKey } },
+      {
+        method: 'DELETE',
+        headers: { apikey: this.env.evolutionApiKey },
+        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      },
     )
     if (response.status === 404) return
     if (!response.ok) throw new Error(`Evolution delete failed (${response.status})`)
@@ -184,17 +191,21 @@ export class HttpEvolution implements EvolutionClient {
   }
 
   async sendMedia(media: MediaMessage): Promise<SentText> {
-    const data = await this.request(`/message/sendMedia/${INSTANCE_NAME}`, {
-      method: 'POST',
-      body: JSON.stringify({
-        number: media.number,
-        mediatype: media.mediatype,
-        mimetype: media.mimetype,
-        fileName: media.fileName,
-        caption: media.caption,
-        media: mediaPayload(media.media),
-      }),
-    })
+    const data = await this.request(
+      `/message/sendMedia/${INSTANCE_NAME}`,
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          number: media.number,
+          mediatype: media.mediatype,
+          mimetype: media.mimetype,
+          fileName: media.fileName,
+          caption: media.caption,
+          media: mediaPayload(media.media),
+        }),
+      },
+      MEDIA_TIMEOUT_MS,
+    )
     return { messageId: messageIdFrom(data) }
   }
 
@@ -213,10 +224,11 @@ export class HttpEvolution implements EvolutionClient {
   }
 
   async downloadMedia(message: unknown): Promise<DownloadedMedia> {
-    const data = (await this.request(`/chat/getBase64FromMediaMessage/${INSTANCE_NAME}`, {
-      method: 'POST',
-      body: JSON.stringify({ message, convertToMp4: false }),
-    })) as Record<string, unknown>
+    const data = (await this.request(
+      `/chat/getBase64FromMediaMessage/${INSTANCE_NAME}`,
+      { method: 'POST', body: JSON.stringify({ message, convertToMp4: false }) },
+      MEDIA_TIMEOUT_MS,
+    )) as Record<string, unknown>
     const base64 = typeof data.base64 === 'string' ? data.base64 : ''
     if (!base64) throw new Error('Evolution did not return media')
     const mimeType = typeof data.mimetype === 'string' ? data.mimetype : 'application/pdf'

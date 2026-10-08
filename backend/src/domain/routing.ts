@@ -40,7 +40,7 @@ export function resolveAssignee(
   return { assigneeId: admin?.id ?? null, assigneeRole, holder: admin, unrouted: true }
 }
 
-/** "the manager (Joshy)", or with an @mention when a phone is given. */
+/** "the manager (<name>)", with an @mention when a phone is given. */
 export function holderLabel(assignment: Assignment, mentionPhone?: string | null): string {
   const role = assignment.unrouted ? 'admin' : assignment.assigneeRole
   const name = assignment.holder

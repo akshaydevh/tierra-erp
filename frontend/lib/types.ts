@@ -93,6 +93,11 @@ export type AccountLink = {
   phoneNumber: string | null
 }
 
+export type RoleHolder = { id: string; name: string }
+
+/** Who holds each role right now, as the backend resolves it for routing. */
+export type RoleHolders = Record<Role, RoleHolder | null>
+
 export type WhatsappConnection = {
   instanceName: string
   status: 'disconnected' | 'qr_pending' | 'connected'

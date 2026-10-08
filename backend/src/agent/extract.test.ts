@@ -45,4 +45,22 @@ describe('extractPurchaseOrder', () => {
       'The purchase order reader failed (503). No order was created.',
     )
   })
+
+  it('gives the reader 90 s and reports a reader that does not answer', async () => {
+    const timeout = vi.spyOn(AbortSignal, 'timeout')
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        throw new DOMException('The operation was aborted due to timeout', 'TimeoutError')
+      }),
+    )
+    const error = await extractPurchaseOrder(Buffer.from('%PDF'), env).then(
+      () => null,
+      (caught: unknown) => caught,
+    )
+    expect(timeout).toHaveBeenCalledWith(90_000)
+    expect(error).toBeInstanceOf(ExtractError)
+    expect((error as ExtractError).message).toBe('The purchase order reader did not answer. No order was created.')
+    timeout.mockRestore()
+  })
 })

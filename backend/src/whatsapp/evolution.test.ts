@@ -137,6 +137,25 @@ describe('HttpEvolution', () => {
     vi.stubGlobal('fetch', vi.fn(async () => new Response('down', { status: 502 })))
     await expect(new HttpEvolution(env).fetchAllGroups()).rejects.toThrow('502')
   })
+
+  it('gives up on a slow gateway: 20 s for a call, 60 s for media', async () => {
+    const timeout = vi.spyOn(AbortSignal, 'timeout')
+    const signals: Array<AbortSignal | null | undefined> = []
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_url: string, init: RequestInit = {}) => {
+        signals.push(init.signal)
+        return new Response(JSON.stringify({ key: { id: 'X1' } }), { status: 200 })
+      }),
+    )
+    const evolution = new HttpEvolution(env)
+    await evolution.sendText('919812345678', 'hello')
+    await evolution.sendMedia({ number: '919812345678', mediatype: 'document', mimetype: 'application/pdf', fileName: 'a.pdf', media: 'JVBER' })
+    await evolution.deleteInstance()
+    expect(timeout.mock.calls.map(([ms]) => ms)).toEqual([20_000, 60_000, 20_000])
+    expect(signals.every((signal) => signal instanceof AbortSignal)).toBe(true)
+    timeout.mockRestore()
+  })
 })
 
 describe('groupsFrom', () => {
@@ -155,4 +174,5 @@ describe('groupsFrom', () => {
     ])
     expect(groupsFrom('nope')).toEqual([])
   })
+
 })

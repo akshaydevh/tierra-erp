@@ -63,6 +63,19 @@ describe.skipIf(!pg)('DrizzleStore on Postgres 18', () => {
     )
   })
 
+  it('transfers the admin role in one step', async () => {
+    expect(await conn.store.transferAdmin('usr_joshy')).toBe('ok')
+    expect(await conn.store.transferAdmin('usr_nobody')).toBe('not_found')
+    const roles = (await conn.store.listAccountLinks()).map((account) => [account.id, account.role])
+    expect(roles).toEqual(
+      expect.arrayContaining([
+        ['usr_alex', 'manager'],
+        ['usr_joshy', 'admin'],
+        ['usr_anju', 'office'],
+      ]),
+    )
+  })
+
   it('creates one live task per subject and kind', async () => {
     const input = {
       title: ' Buy raw banana ',
@@ -281,4 +294,119 @@ describe.skipIf(!pg)('DrizzleStore on Postgres 18', () => {
       subjectId: 'pnd_2',
     })
   })
+  it('keeps one stored PDF per WhatsApp message', async () => {
+    const pdf = { filename: 'po.pdf', mimeType: 'application/pdf', content: Buffer.from('%PDF'), messageId: 'wa-pdf-1' }
+    expect(await conn.store.hasDocumentForMessage('wa-pdf-1')).toBe(false)
+    await conn.store.insertDocument(pdf)
+    expect(await conn.store.hasDocumentForMessage('wa-pdf-1')).toBe(true)
+    await expect(conn.store.insertDocument(pdf)).rejects.toThrow()
+    await conn.sql`
+      insert into order_documents (id, filename, mime_type, content)
+      values ('doc_a', 'a.pdf', 'x', decode('00', 'hex')), ('doc_b', 'b.pdf', 'x', decode('00', 'hex'))`
+  })
+
+  it('lists the held orders waiting in a chat, newest first', async () => {
+    const hold = async (poNumber: string, remoteJid: string) => {
+      const documentId = await conn.store.insertDocument({
+        filename: `${poNumber}.pdf`,
+        mimeType: 'application/pdf',
+        content: Buffer.from('%PDF'),
+        messageId: `wa-${poNumber}`,
+      })
+      return conn.store.holdShortOrder({
+        customerId: 'cus_beyond',
+        poNumber,
+        poDate: null,
+        remoteJid,
+        documentId,
+        lines: [{ itemId: 'item_ban80', description: 'Banana chips 80g', quantity: 200, unit: 'pouch', unitPrice: null }],
+        shortages: [{ itemId: 'item_ban80', quantity: 160, unit: 'pouch' }],
+        assigneeId: 'usr_joshy',
+      })
+    }
+    const first = await hold('PO-A', '919900000000@s.whatsapp.net')
+    const second = await hold('PO-B', '919900000000@s.whatsapp.net')
+    await hold('PO-C', '919812345678@s.whatsapp.net')
+    const awaiting = await conn.store.listAwaitingConfirmations('919900000000@s.whatsapp.net')
+    expect(awaiting.map((row) => [row.id, row.poNumber])).toEqual([
+      [second.id, 'PO-B'],
+      [first.id, 'PO-A'],
+    ])
+    expect(awaiting[0]?.lines).toEqual([
+      { itemId: 'item_ban80', description: 'Banana chips 80g', quantity: 200, unit: 'pouch', unitPrice: null },
+    ])
+    await conn.store.declinePendingOrder(second.id)
+    expect((await conn.store.listAwaitingConfirmations('919900000000@s.whatsapp.net')).map((row) => row.id)).toEqual([
+      first.id,
+    ])
+    expect(await conn.store.listAwaitingConfirmations('nobody@s.whatsapp.net')).toEqual([])
+  })
+
+  it('cancels the open tasks about a subject and leaves finished ones', async () => {
+    const about = { category: 'procurement' as const, createdBy: 'usr_alex', subjectType: 'pending_order', subjectId: 'pnd_9' }
+    const buy = await conn.store.createTask({ ...about, title: 'Buy', kind: 'procurement', assigneeId: 'usr_joshy' })
+    const review = await conn.store.createTask({ ...about, title: 'Review', kind: 'review', assigneeId: 'usr_joshy' })
+    const other = await conn.store.createTask({ ...about, title: 'Other', subjectId: 'pnd_8', assigneeId: 'usr_joshy' })
+    await conn.store.updateTaskStatus(review.id, 'done')
+    expect(await conn.store.cancelTasksForSubject('pending_order', 'pnd_9')).toBe(1)
+    expect((await conn.store.getTask(buy.id))?.status).toBe('cancelled')
+    expect((await conn.store.getTask(review.id))?.status).toBe('done')
+    expect((await conn.store.getTask(other.id))?.status).toBe('todo')
+  })
+
+  it('reserves a task notice once and frees it only while nothing was sent', async () => {
+    const task = await conn.store.createTask({ title: 'Count', category: 'operations', assigneeId: 'usr_anju', createdBy: 'usr_alex' })
+    await conn.store.createTask({ title: 'Nobody', category: 'operations', assigneeId: null, createdBy: 'usr_alex' })
+    await conn.store.createTask({ title: 'Sign', category: 'operations', kind: 'approval', assigneeId: 'usr_anju', createdBy: 'usr_alex' })
+    expect((await conn.store.listUnnotifiedOpenTasks()).map((row) => row.id)).toEqual([task.id])
+
+    expect(await conn.store.reserveTaskNotice(task.id, 'usr_joshy')).toBe(false)
+    expect(await conn.store.reserveTaskNotice(task.id, 'usr_anju')).toBe(true)
+    expect(await conn.store.reserveTaskNotice(task.id, 'usr_anju')).toBe(false)
+    expect(await conn.store.listUnnotifiedOpenTasks()).toEqual([])
+
+    await conn.store.releaseTaskNotice(task.id)
+    expect((await conn.store.getTask(task.id))?.notifiedAt).toBeNull()
+    expect(await conn.store.reserveTaskNotice(task.id, 'usr_anju')).toBe(true)
+    await conn.store.markTaskNotified(task.id, 'wa-notice-9', now)
+    await conn.store.releaseTaskNotice(task.id)
+    expect(await conn.store.getTask(task.id)).toMatchObject({ notifiedAt: now.toISOString(), waMessageId: 'wa-notice-9' })
+  })
+
+  it('frees notices reserved long ago that never recorded a message', async () => {
+    const stuck = await conn.store.createTask({ title: 'Stuck', category: 'operations', assigneeId: 'usr_anju', createdBy: 'usr_alex' })
+    const sent = await conn.store.createTask({ title: 'Sent', category: 'operations', assigneeId: 'usr_anju', createdBy: 'usr_alex' })
+    expect(await conn.store.reserveTaskNotice(stuck.id, 'usr_anju')).toBe(true)
+    expect(await conn.store.reserveTaskNotice(sent.id, 'usr_anju')).toBe(true)
+    await conn.store.markTaskNotified(sent.id, 'wa-notice-10', now)
+
+    expect(await conn.store.releaseStaleTaskNotices(new Date(Date.now() - 60_000))).toBe(0)
+    expect(await conn.store.releaseStaleTaskNotices(new Date(Date.now() + 60_000))).toBe(1)
+    expect((await conn.store.getTask(stuck.id))?.notifiedAt).toBeNull()
+    expect((await conn.store.getTask(sent.id))?.waMessageId).toBe('wa-notice-10')
+    expect((await conn.store.listUnnotifiedOpenTasks()).map((row) => row.id)).toContain(stuck.id)
+  })
+
+  it('stamps assignedAt when a task is created and when its holder changes', async () => {
+    const task = await conn.store.createTask({ title: 'Count', category: 'operations', assigneeId: 'usr_anju', createdBy: 'usr_alex' })
+    expect(task.assignedAt).toBe(task.createdAt)
+    const same = await conn.store.updateTaskAssignment(task.id, { assigneeId: 'usr_anju', assigneeRole: 'office' })
+    expect(same?.assignedAt).toBe(task.assignedAt)
+    const moved = await conn.store.updateTaskAssignment(task.id, { assigneeId: 'usr_joshy', assigneeRole: null })
+    expect(Date.parse(moved!.assignedAt)).toBeGreaterThan(Date.parse(task.assignedAt))
+  })
+
+  it('prunes finished jobs older than the cutoff', async () => {
+    const done = await conn.store.enqueueJob({ kind: 'x', payload: {}, runAfter: now })
+    const failed = await conn.store.enqueueJob({ kind: 'x', payload: {}, runAfter: now })
+    const waiting = await conn.store.enqueueJob({ kind: 'x', payload: {}, runAfter: now })
+    await conn.store.completeJob(done!.id)
+    await conn.store.failJob(failed!.id, 'boom', null)
+    expect(await conn.store.pruneJobs(later(-60_000))).toBe(0)
+    await conn.sql`update jobs set updated_at = ${later(-8 * 86_400_000).toISOString()}::timestamptz`
+    expect(await conn.store.pruneJobs(later(-7 * 86_400_000))).toBe(2)
+    expect(await conn.store.getJob(waiting!.id)).not.toBeNull()
+    expect(await conn.store.getJob(done!.id)).toBeNull()
+  })
 })
+

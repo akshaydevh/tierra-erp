@@ -1,7 +1,6 @@
 import type { Customer, Item } from './types'
 
 export const DEV_PASSWORD = 'tierra-dev'
-export const PROCUREMENT_ASSIGNEE_ID = 'usr_joshy'
 export const RAW_BANANA_ITEM_ID = 'item_rm_banana'
 
 export const seedUsers = [

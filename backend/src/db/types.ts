@@ -82,6 +82,8 @@ export type TaskRecord = {
   createdByName: string | null
   createdAt: string
   completedAt: string | null
+  /** When the current holder got the task; a new holder (or the same one again later) gets a new notice. */
+  assignedAt: string
 }
 
 export type NewTask = {

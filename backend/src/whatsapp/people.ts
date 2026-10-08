@@ -17,7 +17,21 @@ export function phonesExact(a: string | null | undefined, b: string | null | und
   return left.length >= 8 && left === phoneDigits(b)
 }
 
-/** Loose match tolerant of missing country codes. For display and linking only. */
+export const DEFAULT_COUNTRY_CODE = '91'
+
+/**
+ * A phone number as WhatsApp writes it: country code and number, digits only. A 10-digit mobile
+ * number (6-9 first, optionally after a 0) gets the default country code. Anything else must already
+ * carry its country code (11 to 15 digits), or this returns null.
+ */
+export function normalizePhone(input: string, defaultCountry = DEFAULT_COUNTRY_CODE): string | null {
+  let digits = input.replace(/\D/g, '')
+  if (/^0\d{10}$/.test(digits)) digits = digits.slice(1)
+  if (/^[6-9]\d{9}$/.test(digits)) digits = `${defaultCountry}${digits}`
+  return digits.length >= 11 && digits.length <= 15 ? digits : null
+}
+
+/** Loose match tolerant of missing country codes. For display only, never to decide who someone is. */
 export function phonesMatch(stored: string, candidate: string | null | undefined): boolean {
   const left = phoneDigits(stored)
   const right = phoneDigits(candidate)
@@ -34,7 +48,7 @@ function linkedAccounts(accounts: AccountLink[]): LinkedAccount[] {
 function matchAccount(accounts: LinkedAccount[], candidates: Array<string | null | undefined>): LinkedAccount | null {
   for (const candidate of candidates) {
     if (!candidate) continue
-    const found = accounts.find((account) => phonesMatch(account.phoneNumber, candidate))
+    const found = accounts.find((account) => phonesExact(account.phoneNumber, candidate))
     if (found) return found
   }
   return null

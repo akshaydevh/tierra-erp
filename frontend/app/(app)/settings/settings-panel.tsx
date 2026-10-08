@@ -93,7 +93,7 @@ function Relations({ me, canManage }: { me: Me; canManage: boolean }) {
           <h3>Relations</h3>
           <p>
             Link each account to the phone they use. When that number messages Tierra Bot, or is mentioned in a
-            group, Tierra Bot knows who it is.
+            group, Tierra Bot knows who it is. Enter the number with its country code, e.g. 91 98470 12345.
           </p>
         </div>
         <span className="zid">Accounts</span>
@@ -149,7 +149,8 @@ function Relations({ me, canManage }: { me: Me; canManage: boolean }) {
                     type="tel"
                     inputMode="tel"
                     autoComplete="off"
-                    placeholder="Phone number"
+                    placeholder="91 98470 12345"
+                    title="Country code and number, e.g. 91 98470 12345"
                     value={value}
                     disabled={!canManage || pending}
                     onChange={(event) =>

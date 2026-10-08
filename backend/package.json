@@ -9,7 +9,8 @@
     "db:migrate": "drizzle-kit migrate",
     "test": "vitest run",
     "test:pg": "vitest run pg.test",
-    "set-password": "tsx src/scripts/set-password.ts"
+    "set-password": "tsx src/scripts/set-password.ts",
+    "create-admin": "tsx src/scripts/create-admin.ts"
   },
   "dependencies": {
     "@hono/node-server": "^1.19.0",

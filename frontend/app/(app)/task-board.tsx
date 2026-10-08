@@ -9,6 +9,7 @@ import {
   roleLabel,
   type AccountLink,
   type Role,
+  type RoleHolders,
   type Task,
   type TaskCategory,
   type TaskStatus,
@@ -16,14 +17,9 @@ import {
 
 const columns: TaskStatus[] = ['todo', 'doing', 'done']
 
-type Board = { tasks: Task[]; accounts: AccountLink[] }
+type Board = { tasks: Task[]; accounts: AccountLink[]; holders: RoleHolders }
 type Assignment = { assigneeId: string | null; assigneeRole: Role | null }
 type TaskPatch = { status?: TaskStatus } | Assignment
-
-function holderFor(accounts: AccountLink[], role: Role): AccountLink | null {
-  const holders = accounts.filter((account) => account.role === role)
-  return holders.find((account) => account.phoneNumber) ?? holders[0] ?? null
-}
 
 function assignmentValue(task: Assignment): string {
   if (task.assigneeRole) return `role:${task.assigneeRole}`
@@ -37,13 +33,13 @@ function parseAssignment(value: string): Assignment {
   return { assigneeId: null, assigneeRole: null }
 }
 
-function AssignOptions({ accounts }: { accounts: AccountLink[] }) {
+function AssignOptions({ accounts, holders }: { accounts: AccountLink[]; holders: RoleHolders | null }) {
   return (
     <>
       <option value="">Unassigned</option>
       <optgroup label="Roles">
         {ROLES.map((role) => {
-          const holder = holderFor(accounts, role)
+          const holder = holders?.[role]
           return (
             <option key={role} value={`role:${role}`}>
               {holder ? `${roleLabel(role)} (${holder.name})` : roleLabel(role)}
@@ -180,6 +176,7 @@ export function TaskBoard() {
 
   const now = new Date()
   const accounts = board?.accounts ?? []
+  const holders = board?.holders ?? null
 
   return (
     <div className="taskboard">
@@ -206,7 +203,7 @@ export function TaskBoard() {
         <label className="field">
           <span>Assign to</span>
           <select value={assignTo} onChange={(event) => setAssignTo(event.target.value)}>
-            <AssignOptions accounts={accounts} />
+            <AssignOptions accounts={accounts} holders={holders} />
           </select>
         </label>
         <label className="field">
@@ -269,7 +266,7 @@ export function TaskBoard() {
                       value={assignmentValue(task)}
                       onChange={(event) => void patchTask(task.id, parseAssignment(event.target.value))}
                     >
-                      <AssignOptions accounts={accounts} />
+                      <AssignOptions accounts={accounts} holders={holders} />
                     </select>
                   </label>
                   <button

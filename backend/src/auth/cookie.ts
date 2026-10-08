@@ -19,12 +19,16 @@ export function readCookie(header: string | undefined, name: string): string | n
   return null
 }
 
-export function sessionCookie(token: string, maxAgeSeconds: number): string {
-  return `${SESSION_COOKIE}=${token}; HttpOnly; Path=/; SameSite=Lax; Max-Age=${maxAgeSeconds}`
+function cookieFlags(secure: boolean): string {
+  return `HttpOnly; Path=/; SameSite=Lax${secure ? '; Secure' : ''}`
 }
 
-export function clearSessionCookie(): string {
-  return `${SESSION_COOKIE}=; HttpOnly; Path=/; SameSite=Lax; Max-Age=0`
+export function sessionCookie(token: string, maxAgeSeconds: number, secure = false): string {
+  return `${SESSION_COOKIE}=${token}; ${cookieFlags(secure)}; Max-Age=${maxAgeSeconds}`
+}
+
+export function clearSessionCookie(secure = false): string {
+  return `${SESSION_COOKIE}=; ${cookieFlags(secure)}; Max-Age=0`
 }
 
 export function safeEqual(left: string | undefined, right: string): boolean {

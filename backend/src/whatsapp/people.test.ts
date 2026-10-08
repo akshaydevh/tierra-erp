@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { AccountLink } from '../db/types'
 import { parseWebhook } from './parse'
-import { phonesExact, phonesMatch, resolvePeople } from './people'
+import { normalizePhone, phonesExact, phonesMatch, resolvePeople } from './people'
 
 describe('phonesExact', () => {
   it('matches the same digits however they are written', () => {
@@ -18,6 +18,27 @@ describe('phonesExact', () => {
     expect(phonesExact('1234567', '1234567')).toBe(false)
     expect(phonesExact(null, null)).toBe(false)
     expect(phonesExact('', '')).toBe(false)
+  })
+})
+
+describe('normalizePhone', () => {
+  it('adds the default country code to a 10-digit mobile number', () => {
+    expect(normalizePhone('98470 12345')).toBe('919847012345')
+    expect(normalizePhone('098470 12345')).toBe('919847012345')
+    expect(normalizePhone('98470 12345', '1')).toBe('19847012345')
+  })
+
+  it('keeps a number that already has its country code', () => {
+    expect(normalizePhone('+91 98470 12345')).toBe('919847012345')
+    expect(normalizePhone('+44 7700 900123')).toBe('447700900123')
+  })
+
+  it('refuses a number it cannot complete', () => {
+    expect(normalizePhone('12345678')).toBeNull()
+    expect(normalizePhone('4734 222 333')).toBeNull()
+    expect(normalizePhone('0473 4222333')).toBeNull()
+    expect(normalizePhone('1234567890123456')).toBeNull()
+    expect(normalizePhone('')).toBeNull()
   })
 })
 
@@ -42,5 +63,20 @@ describe('resolvePeople', () => {
     const people = resolvePeople(event.message, 'personal', accounts, '919800000001')
     expect(people.speaker).toEqual({ userId: 'usr_joshy', name: 'Joshy', role: 'manager', phoneNumber: '919812345678' })
     expect(people.mentioned.map((person) => person.userId)).toEqual(['usr_alex'])
+  })
+
+  it('does not take a number without its country code for a linked account', () => {
+    const event = parseWebhook({
+      event: 'messages.upsert',
+      instance: 'tierra',
+      data: {
+        key: { id: 'M2', remoteJid: '9812345678@s.whatsapp.net', fromMe: false },
+        message: { conversation: 'ask 9800000009 and 449800000009' },
+      },
+    })
+    if (event.type !== 'message') throw new Error('expected a message')
+    const people = resolvePeople(event.message, 'personal', accounts, '919800000001')
+    expect(people.speaker).toBeNull()
+    expect(people.mentioned).toEqual([])
   })
 })

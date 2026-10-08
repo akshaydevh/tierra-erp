@@ -30,6 +30,8 @@ cd frontend && cp .env.example .env && npm install && npm run dev
 
 The API listens on port 3002. With `SEED_DEMO=1` (set in `.env.example` and in compose) it seeds an empty database on first boot. Production never sets it, so production never seeds. The site is http://localhost:3000.
 
+In production (`NODE_ENV=production`, set by the Dockerfile) the API will not start until `EVOLUTION_API_KEY` and `EVOLUTION_WEBHOOK_SECRET` are set to private values. Compose runs the API with `NODE_ENV=development`.
+
 Preview password for every account: `tierra-dev`, or `SEED_PASSWORD` when set.
 
 | Email | Role |
@@ -40,10 +42,16 @@ Preview password for every account: `tierra-dev`, or `SEED_PASSWORD` when set.
 
 There is one admin at a time. Making someone else admin moves Alex to manager.
 
-To change a password on a live database:
+To change a password on a live database (the password is read from `NEW_PASSWORD`, or typed when asked; never put it on the command line, where shell history keeps it):
 
 ```sh
-cd backend && npm run set-password -- <email> <password>
+cd backend && npm run set-password -- <email>
+```
+
+To create the first admin on an empty database (refused once an admin exists):
+
+```sh
+cd backend && npm run create-admin -- <email> "<name>"
 ```
 
 Banana chips 80g is seeded at 40 pouches on hand with an open order for 100, so available stock is −60. A WhatsApp PDF that asks for that item is refused.

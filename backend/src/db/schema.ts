@@ -203,15 +203,21 @@ export const procurementOrders = pgTable('procurement_orders', {
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 })
 
-export const orderDocuments = pgTable('order_documents', {
-  id: text('id').primaryKey(),
-  orderId: text('order_id').references(() => orders.id, { onDelete: 'set null' }),
-  messageId: text('message_id'),
-  filename: text('filename').notNull(),
-  mimeType: text('mime_type').notNull(),
-  content: bytea('content').notNull(),
-  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
-})
+export const orderDocuments = pgTable(
+  'order_documents',
+  {
+    id: text('id').primaryKey(),
+    orderId: text('order_id').references(() => orders.id, { onDelete: 'set null' }),
+    messageId: text('message_id'),
+    filename: text('filename').notNull(),
+    mimeType: text('mime_type').notNull(),
+    content: bytea('content').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex('order_documents_message').on(table.messageId).where(sql`${table.messageId} is not null`),
+  ],
+)
 
 export const whatsappConnection = pgTable(
   'whatsapp_connection',
@@ -263,6 +269,7 @@ export const tasks = pgTable(
     waMessageId: text('wa_message_id'),
     createdVia: text('created_via').notNull().default('dashboard'),
     completedAt: timestamp('completed_at', { withTimezone: true }),
+    assignedAt: timestamp('assigned_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [
     check(

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { TIERRA_HEADER, isBotEcho } from './brand'
-import { audienceFor, parseWebhook, type IncomingMessage } from './parse'
+import { audienceFor, parseWebhook, withoutMedia, type IncomingMessage } from './parse'
 
 const BOT = '919800000001'
 const BOT_JID = `${BOT}@s.whatsapp.net`
@@ -341,5 +341,36 @@ describe('audienceFor', () => {
       message: { protocolMessage: { type: 'REVOKE', key: { id: 'X' } } },
     })
     expect(audienceFor(revoke, BOT, { targetsBot: true })).toBe('ignore')
+  })
+})
+
+describe('withoutMedia', () => {
+  it('drops embedded file bytes and thumbnails but keeps what a download needs', () => {
+    const message = parsed({
+      key: { id: 'D9', remoteJid: JOSHY, fromMe: false },
+      base64: 'JVBERi0xLjQ=',
+      message: {
+        base64: 'JVBERi0xLjQ=',
+        documentMessage: {
+          mimetype: 'application/pdf',
+          fileName: 'po.pdf',
+          mediaKey: 'key==',
+          directPath: '/v/t62/abc',
+          jpegThumbnail: '/9j/4AAQ',
+        },
+      },
+    })
+    expect(message.embeddedBase64).toBe('JVBERi0xLjQ=')
+    const queued = withoutMedia(message)
+    expect(queued.embeddedBase64).toBeNull()
+    expect(queued.pdf).toEqual(message.pdf)
+    expect(queued.raw).toMatchObject({
+      key: { id: 'D9', remoteJid: JOSHY, fromMe: false },
+      message: {
+        documentMessage: { mimetype: 'application/pdf', fileName: 'po.pdf', mediaKey: 'key==', directPath: '/v/t62/abc' },
+      },
+    })
+    expect(JSON.stringify(queued)).not.toContain('JVBER')
+    expect(JSON.stringify(queued)).not.toContain('jpegThumbnail')
   })
 })

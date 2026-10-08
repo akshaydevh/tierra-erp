@@ -48,6 +48,7 @@ services:
       postgres:
         condition: service_healthy
     environment:
+      NODE_ENV: development
       DATABASE_URL: postgres://tierra:tierra@postgres:5432/tierra
       PORT: "3002"
       EVOLUTION_URL: http://evolution:8080

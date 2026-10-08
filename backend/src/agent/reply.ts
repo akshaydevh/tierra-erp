@@ -1,6 +1,6 @@
 import type { DashboardSnapshot } from '../domain/reads'
 import type { Person } from '../whatsapp/people'
-import type { ExtractEnv } from './extract'
+import { MODEL_TIMEOUT_MS, type ExtractEnv } from './extract'
 
 export type ChatTurn = {
   speaker: 'owner' | 'contact' | 'tierra'
@@ -62,6 +62,7 @@ export function createCompleteChat(env: ExtractEnv): (input: ChatInput) => Promi
     try {
       const response = await fetch(`${env.openaiBaseUrl.replace(/\/$/, '')}/chat/completions`, {
         method: 'POST',
+        signal: AbortSignal.timeout(MODEL_TIMEOUT_MS),
         headers: {
           authorization: `Bearer ${env.openaiApiKey}`,
           'content-type': 'application/json',

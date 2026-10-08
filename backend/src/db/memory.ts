@@ -31,7 +31,7 @@ import type {
 import { orderSourceForThread, toPublicUser } from './types'
 
 type SessionRow = { tokenHash: string; userId: string; expiresAt: Date }
-type JobRow = JobRecord & { seq: number }
+type JobRow = JobRecord & { seq: number; updatedAt: string }
 type MessageRow = ClaimedMessage & { createdAt: string }
 type DocumentRow = StoredDocument & { id: string; orderId: string | null; messageId: string | null }
 type StoredProcurement = ProcurementOrderRecord & { pendingOrderId: string | null }
@@ -158,6 +158,16 @@ export class MemoryStore implements Store {
     return 'ok'
   }
 
+  async transferAdmin(userId: string): Promise<'ok' | 'not_found'> {
+    const user = this.users.find((row) => row.id === userId)
+    if (!user) return 'not_found'
+    for (const row of this.users) {
+      if (row.role === 'admin' && row.id !== userId) row.role = 'manager'
+    }
+    user.role = 'admin'
+    return 'ok'
+  }
+
   async listCustomers(): Promise<Customer[]> {
     return this.customers.map((row) => ({ ...row }))
   }
@@ -268,6 +278,10 @@ export class MemoryStore implements Store {
     this.messages = this.messages.filter((row) => row.evolutionMessageId !== evolutionMessageId)
   }
 
+  async hasDocumentForMessage(messageId: string): Promise<boolean> {
+    return this.documents.some((row) => row.messageId === messageId)
+  }
+
   async insertDocument(input: StoredDocument & { messageId: string }): Promise<string> {
     const id = newId('doc')
     this.documents.push({ ...input, id, orderId: null, messageId: input.messageId })
@@ -327,10 +341,11 @@ export class MemoryStore implements Store {
     return { id }
   }
 
-  async findAwaitingConfirmation(remoteJid: string): Promise<PendingConfirmation | null> {
-    const pending = [...this.pending].reverse().find((row) => row.remoteJid === remoteJid && row.status === 'awaiting_admin')
-    if (!pending) return null
-    return { id: pending.id, poNumber: pending.poNumber, lines: pending.lines.map((line) => ({ ...line })) }
+  async listAwaitingConfirmations(remoteJid: string): Promise<PendingConfirmation[]> {
+    return [...this.pending]
+      .reverse()
+      .filter((row) => row.remoteJid === remoteJid && row.status === 'awaiting_admin')
+      .map((row) => ({ id: row.id, poNumber: row.poNumber, lines: row.lines.map((line) => ({ ...line })) }))
   }
 
   async confirmPendingOrder(
@@ -509,6 +524,18 @@ export class MemoryStore implements Store {
     )
   }
 
+  async listUnnotifiedOpenTasks(): Promise<TaskRecord[]> {
+    return this.newestFirst(
+      this.tasks.filter(
+        (task) =>
+          (task.status === 'todo' || task.status === 'doing') &&
+          task.assigneeId !== null &&
+          task.kind !== 'approval' &&
+          task.notifiedAt === null,
+      ),
+    )
+  }
+
   async findTaskByMessage(waMessageId: string): Promise<TaskRecord | null> {
     const task = this.tasks.find((row) => row.waMessageId === waMessageId)
     if (task) return task
@@ -532,6 +559,7 @@ export class MemoryStore implements Store {
       : undefined
     if (existing) return existing
     const assignee = input.assigneeId ? this.users.find((user) => user.id === input.assigneeId) : undefined
+    const createdAt = new Date().toISOString()
     const task: TaskRecord = {
       id: newId('tsk'),
       title: input.title.trim(),
@@ -550,8 +578,9 @@ export class MemoryStore implements Store {
       createdVia: input.createdVia ?? 'dashboard',
       createdBy: input.createdBy,
       createdByName: this.userName(input.createdBy),
-      createdAt: new Date().toISOString(),
+      createdAt,
       completedAt: null,
+      assignedAt: createdAt,
     }
     this.tasks.push(task)
     return task
@@ -565,6 +594,17 @@ export class MemoryStore implements Store {
     return task
   }
 
+  async cancelTasksForSubject(subjectType: string, subjectId: string): Promise<number> {
+    const open = this.tasks.filter(
+      (task) =>
+        task.subjectType === subjectType &&
+        task.subjectId === subjectId &&
+        (task.status === 'todo' || task.status === 'doing'),
+    )
+    for (const task of open) task.status = 'cancelled'
+    return open.length
+  }
+
   async updateTaskAssignment(
     id: string,
     assignment: { assigneeId: string | null; assigneeRole: Role | null },
@@ -576,11 +616,39 @@ export class MemoryStore implements Store {
     if (task.assigneeId !== (assignee?.id ?? null)) {
       task.notifiedAt = null
       task.waMessageId = null
+      task.assignedAt = new Date().toISOString()
     }
     task.assigneeId = assignee?.id ?? null
     task.assigneeName = assignee?.name ?? null
     task.assigneeRole = assignment.assigneeRole
     return task
+  }
+
+  async reserveTaskNotice(id: string, assigneeId: string): Promise<boolean> {
+    const task = this.tasks.find((row) => row.id === id)
+    if (!task || task.assigneeId !== assigneeId || task.notifiedAt) return false
+    task.notifiedAt = new Date().toISOString()
+    return true
+  }
+
+  async releaseTaskNotice(id: string): Promise<void> {
+    const task = this.tasks.find((row) => row.id === id)
+    if (task && !task.waMessageId) task.notifiedAt = null
+  }
+
+  async releaseStaleTaskNotices(before: Date): Promise<number> {
+    let released = 0
+    for (const task of this.tasks) {
+      const stale =
+        (task.status === 'todo' || task.status === 'doing') &&
+        !task.waMessageId &&
+        task.notifiedAt !== null &&
+        new Date(task.notifiedAt).getTime() < before.getTime()
+      if (!stale) continue
+      task.notifiedAt = null
+      released += 1
+    }
+    return released
   }
 
   async markTaskNotified(id: string, waMessageId: string | null, at: Date): Promise<void> {
@@ -590,7 +658,7 @@ export class MemoryStore implements Store {
     task.waMessageId = waMessageId
   }
 
-  private toJob({ seq: _seq, ...job }: JobRow): JobRecord {
+  private toJob({ seq: _seq, updatedAt: _updatedAt, ...job }: JobRow): JobRecord {
     return { ...job, payload: { ...job.payload } }
   }
 
@@ -609,6 +677,7 @@ export class MemoryStore implements Store {
       idempotencyKey: key,
       lastError: null,
       seq: this.jobs.length,
+      updatedAt: new Date().toISOString(),
     }
     this.jobs.push(row)
     return this.toJob(row)
@@ -624,6 +693,7 @@ export class MemoryStore implements Store {
       job.status = 'running'
       job.attempts += 1
       job.lockedUntil = lockedUntil
+      job.updatedAt = now.toISOString()
     }
     return ready.map((job) => this.toJob(job))
   }
@@ -633,6 +703,7 @@ export class MemoryStore implements Store {
     if (!job) return
     job.status = 'done'
     job.lockedUntil = null
+    job.updatedAt = new Date().toISOString()
   }
 
   async failJob(id: string, error: string, retryAt: Date | null): Promise<void> {
@@ -642,6 +713,7 @@ export class MemoryStore implements Store {
     if (retryAt) job.runAfter = retryAt.toISOString()
     job.lockedUntil = null
     job.lastError = error
+    job.updatedAt = new Date().toISOString()
   }
 
   async requeueExpiredJobs(now: Date): Promise<number> {
@@ -649,6 +721,7 @@ export class MemoryStore implements Store {
     for (const job of this.jobs) {
       if (job.status !== 'running' || !job.lockedUntil || new Date(job.lockedUntil) >= now) continue
       job.lockedUntil = null
+      job.updatedAt = now.toISOString()
       if (job.attempts >= job.maxAttempts) {
         job.status = 'failed'
         job.lastError = 'Lease expired'
@@ -658,6 +731,14 @@ export class MemoryStore implements Store {
       requeued += 1
     }
     return requeued
+  }
+
+  async pruneJobs(before: Date): Promise<number> {
+    const finished = (job: JobRow) =>
+      (job.status === 'done' || job.status === 'failed' || job.status === 'cancelled') && new Date(job.updatedAt) < before
+    const count = this.jobs.filter(finished).length
+    this.jobs = this.jobs.filter((job) => !finished(job))
+    return count
   }
 
   async getJob(id: string): Promise<JobRecord | null> {

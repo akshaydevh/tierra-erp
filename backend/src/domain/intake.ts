@@ -223,11 +223,21 @@ export function procureQuantity(requested: number, available: number): number {
   return requested - Math.max(available, 0)
 }
 
-export function shortStockReply(poNumber: string, shortages: Shortage[]): string {
+/** With `adminName` the sender is told the admin will confirm; without it the reader is the one who can. */
+export function shortStockReply(
+  poNumber: string,
+  shortages: Shortage[],
+  assignedTo: string,
+  adminName?: string,
+): string {
   const names = shortages.map((row) => row.name)
   const lines = names.map((name) => `${name} is not available in sufficient quantity.`)
-  lines.push(`Added ${names.join(', ')} to procurement, assigned to Joshy.`)
-  lines.push(`No order was created. An admin can reply YES to confirm PO ${poNumber}.`)
+  lines.push(`Added ${names.join(', ')} to procurement, assigned to ${assignedTo}.`)
+  lines.push(
+    adminName
+      ? `No order was created. Sent to the admin (${adminName}) to confirm.`
+      : `No order was created. An admin can reply YES to confirm PO ${poNumber}.`,
+  )
   return lines.join('\n')
 }
 
@@ -236,7 +246,7 @@ export function shortReply(poNumber: string, shortages: Array<{ name: string }>)
   return `${lines.join('\n')}\nNo order was created for PO ${poNumber}.`
 }
 
-function formatKg(value: number): string {
+export function formatKg(value: number): string {
   const [whole, fraction] = value.toFixed(3).split('.')
   const grouped = (whole ?? '0').replace(/\B(?=(\d{3})+(?!\d))/g, ',')
   return `${grouped}.${fraction}`
@@ -249,12 +259,13 @@ export function createdReply(input: {
   bananaKg: number
   procurementOrderId: string | null
   skipped: string[]
+  assignedTo: string
 }): string {
   const lines = [`Created order ${input.orderId} for PO ${input.poNumber}.`]
   if (input.bananaKg > 0 && input.procurementOrderId) {
     lines.push(`Finished goods ${formatKg(input.finishedGoodsKg)} kg.`)
     lines.push(`Banana required ${formatKg(input.bananaKg)} kg.`)
-    lines.push(`Procurement order ${input.procurementOrderId} is assigned to Joshy.`)
+    lines.push(`Procurement order ${input.procurementOrderId} is assigned to ${input.assignedTo}.`)
   }
   if (input.skipped.length > 0) {
     lines.push(`Left out of the banana calculation: ${input.skipped.join(', ')}.`)

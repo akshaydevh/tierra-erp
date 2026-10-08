@@ -1,7 +1,29 @@
 import { safeEqual } from '../auth/cookie'
-import { handleIncoming, type AgentDeps } from '../agent/handle-message'
-import { audienceFor, isPersonalJid, parseWebhook } from './parse'
+import type { AgentDeps } from '../agent/handle-message'
+import { incomingJob } from '../jobs/worker'
+import { requeueTaskNotices } from '../tasks/notify'
+import { isBotEcho } from './brand'
+import { enrichIdentity, learnIdentities } from './identity'
+import {
+  audienceFor,
+  isPersonalJid,
+  parseWebhook,
+  withoutMedia,
+  type AudienceOptions,
+  type IncomingMessage,
+} from './parse'
 import { normalizeQr } from './qr'
+
+async function audienceOptions(deps: AgentDeps, message: IncomingMessage): Promise<AudienceOptions> {
+  const targetId = message.reaction?.targetId ?? message.quotedId
+  const target = targetId ? await deps.store.findMessage(targetId) : null
+  return { targetsBot: Boolean(target?.fromMe && target.purpose), botMode: deps.botMode }
+}
+
+function senderJid(message: IncomingMessage): string | null {
+  if (message.participantJid) return message.participantAltJid ?? message.participantJid
+  return message.fromMe ? null : (message.aliasJid ?? message.remoteJid)
+}
 
 export async function acceptWebhook(
   deps: AgentDeps & { webhookSecret: string },
@@ -34,6 +56,10 @@ export async function acceptWebhook(
         qrBase64: null,
         phoneNumber: discovered ?? current.phoneNumber,
       })
+      deps.evolution
+        .ensureWebhook()
+        .catch((error: unknown) => console.error('Could not update the WhatsApp webhook after pairing', error))
+      await requeueTaskNotices(deps)
     } else if (event.state === 'connecting') {
       await deps.store.saveWhatsapp({ status: 'qr_pending' })
     } else {
@@ -43,35 +69,39 @@ export async function acceptWebhook(
   }
   if (event.type !== 'message') return { status: 200, body: { ok: true } }
 
-  const message = event.message
+  await learnIdentities(deps.store, event.message)
+  const message = await enrichIdentity(deps.store, event.message)
+  const options = await audienceOptions(deps, message)
   let connection = await deps.store.getWhatsapp()
-  let audience = audienceFor(message, connection.phoneNumber)
+  let audience = audienceFor(message, connection.phoneNumber, options)
   if (
     audience === 'ignore' &&
     message.fromMe &&
+    deps.botMode === 'personal' &&
+    !message.reaction &&
+    !isBotEcho(message.text) &&
     (isPersonalJid(message.remoteJid) || (message.aliasJid ? isPersonalJid(message.aliasJid) : false))
   ) {
     const owner = await deps.evolution.fetchOwnerPhone()
     if (owner && owner !== connection.phoneNumber) {
       connection = await deps.store.saveWhatsapp({ phoneNumber: owner })
-      audience = audienceFor(message, connection.phoneNumber)
+      audience = audienceFor(message, connection.phoneNumber, options)
     }
   }
   if (audience === 'ignore') return { status: 200, body: { ignored: true } }
-  const claimed = await deps.store.claimMessage({
+  if (await deps.store.findMessage(message.id)) return { status: 200, body: { duplicate: true } }
+  const queued = await deps.enqueue(incomingJob(withoutMedia(message), audience))
+  if (!queued) return { status: 200, body: { duplicate: true } }
+  await deps.store.claimMessage({
     evolutionMessageId: message.id,
     remoteJid: message.remoteJid,
     fromMe: message.fromMe,
     hasPdf: Boolean(message.pdf),
     body: message.text,
+    senderJid: senderJid(message),
+    quotedId: message.reaction?.targetId ?? message.quotedId,
+    kind: message.kind,
+    status: 'received',
   })
-  if (!claimed) return { status: 200, body: { duplicate: true } }
-
-  try {
-    await handleIncoming(deps, message, audience)
-    return { status: 200, body: { ok: true } }
-  } catch (error) {
-    await deps.store.releaseMessage(message.id)
-    throw error
-  }
+  return { status: 200, body: { ok: true } }
 }
