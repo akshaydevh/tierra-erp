@@ -282,6 +282,7 @@ svg.i { width: 1.25em; height: 1.25em; fill: none; stroke: currentColor; stroke-
 .pill.amber { background: rgba(217, 119, 6, 0.1); color: var(--amber); }
 .pill.grey { background: var(--bone); color: var(--inksoft); }
 .pill.coral { background: rgba(229, 62, 62, 0.1); color: var(--coral); }
+.pill.ink { background: rgba(18, 60, 36, 0.06); color: var(--ink); }
 .tblwrap { overflow-x: auto; border-radius: 18px; background: var(--paper); box-shadow: var(--sh-sm); }
 table { width: 100%; border-collapse: collapse; text-align: left; font-variant-numeric: tabular-nums; }
 thead tr { border-bottom: 1px solid var(--line); }
@@ -318,7 +319,10 @@ td .sub { font-size: 12px; color: var(--inksoft); margin-top: 2px; }
 }
 .rel:first-child { border-top: none; padding-top: 0; }
 .rel:last-child { padding-bottom: 0; }
+.rel.withrole { grid-template-columns: minmax(160px, 1fr) 140px minmax(180px, 260px) auto; }
 .rel b { display: block; font-size: 14px; font-weight: 700; }
+.relname { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.rel .field select { height: 40px; padding: 0 12px; }
 .rel .field input { height: 40px; padding: 0 14px; }
 .empty { padding: 40px 32px; color: var(--inksoft); }
 .empty h3 {
@@ -480,7 +484,13 @@ td .sub { font-size: 12px; color: var(--inksoft); margin-top: 2px; }
 .pendingfile button { color: var(--coral); font-size: 12px; font-weight: 700; }
 .agentstatus { font-size: 13px; color: var(--inksoft); font-weight: 600; }
 .taskboard { display: flex; flex-direction: column; gap: 16px; }
-.taskform { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(160px, 1fr) minmax(160px, 1fr) auto; gap: 12px; align-items: end; }
+.taskform {
+  display: grid;
+  grid-template-columns: minmax(0, 1.4fr) minmax(150px, 1fr) minmax(170px, 1fr) minmax(190px, 1fr);
+  gap: 12px;
+  align-items: end;
+}
+.taskform .taskdesc { grid-column: 1 / 4; }
 .taskform .field { gap: 6px; }
 .taskform .field > span { font-size: 14px; font-weight: 600; color: var(--inksoft); }
 .taskform .field input, .taskform .field select { height: 48px; }
@@ -517,7 +527,12 @@ td .sub { font-size: 12px; color: var(--inksoft); margin-top: 2px; }
   cursor: grab;
 }
 .taskcard b { font-size: 14px; line-height: 1.35; }
+.taskdetail { font-size: 13px; line-height: 1.45; color: var(--inksoft); }
+.taskchips { display: flex; flex-wrap: wrap; gap: 6px; }
 .taskmeta { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.taskcancel { font-size: 12px; font-weight: 700; color: var(--inksoft); padding: 6px 4px; border-radius: 6px; }
+.taskcancel:hover { color: var(--coral); }
+.taskcancel:focus-visible { outline: 2px solid var(--ink); outline-offset: 1px; }
 .taskassign select {
   max-width: 140px;
   height: 32px;
@@ -555,5 +570,7 @@ td .sub { font-size: 12px; color: var(--inksoft); margin-top: 2px; }
   .agentlog, .agentcompose { padding-left: 20px; padding-right: 20px; }
   .grid3 { grid-template-columns: 1fr; }
   .rel { grid-template-columns: 1fr; align-items: stretch; }
+  .rel.withrole { grid-template-columns: 1fr; }
   .board, .taskform { grid-template-columns: 1fr; }
+  .taskform .taskdesc { grid-column: auto; }
 }

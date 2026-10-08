@@ -2,7 +2,6 @@ import type { PostgresJsDatabase } from 'drizzle-orm/postgres-js'
 import { hashPassword } from '../auth/password'
 import * as schema from './schema'
 import {
-  DEV_PASSWORD,
   seedBalances,
   seedCustomers,
   seedItems,
@@ -14,10 +13,12 @@ import {
 
 type Database = PostgresJsDatabase<typeof schema>
 
-export async function seedIfEmpty(db: Database): Promise<void> {
+export { DEV_PASSWORD } from './seed-data'
+
+export async function seedIfEmpty(db: Database, password: string): Promise<void> {
   const existing = await db.select({ id: schema.users.id }).from(schema.users).limit(1)
   if (existing.length > 0) return
-  const passwordHash = await hashPassword(DEV_PASSWORD)
+  const passwordHash = await hashPassword(password)
   await db.transaction(async (tx) => {
     await tx.insert(schema.users).values(
       seedUsers.map((user) => ({

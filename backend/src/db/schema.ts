@@ -4,7 +4,9 @@ import {
   check,
   customType,
   date,
+  index,
   integer,
+  jsonb,
   numeric,
   pgTable,
   text,
@@ -37,7 +39,10 @@ export const users = pgTable(
     passwordHash: text('password_hash').notNull(),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
-  (table) => [check('users_role_check', sql`${table.role} in ('admin', 'office')`)],
+  (table) => [
+    check('users_role_check', sql`${table.role} in ('admin', 'manager', 'office')`),
+    uniqueIndex('users_single_admin').on(table.role).where(sql`${table.role} = 'admin'`),
+  ],
 )
 
 export const sessions = pgTable('sessions', {
@@ -248,24 +253,101 @@ export const tasks = pgTable(
       .notNull()
       .references(() => users.id),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    kind: text('kind').notNull().default('todo'),
+    assigneeRole: text('assignee_role'),
+    description: text('description'),
+    dueAt: timestamp('due_at', { withTimezone: true }),
+    subjectType: text('subject_type'),
+    subjectId: text('subject_id'),
+    notifiedAt: timestamp('notified_at', { withTimezone: true }),
+    waMessageId: text('wa_message_id'),
+    createdVia: text('created_via').notNull().default('dashboard'),
+    completedAt: timestamp('completed_at', { withTimezone: true }),
   },
   (table) => [
     check(
       'tasks_category_check',
       sql`${table.category} in ('administration', 'operations', 'quality', 'procurement', 'production', 'dispatch', 'finance')`,
     ),
-    check('tasks_status_check', sql`${table.status} in ('todo', 'doing', 'done')`),
+    check('tasks_status_check', sql`${table.status} in ('todo', 'doing', 'done', 'cancelled')`),
+    check(
+      'tasks_kind_check',
+      sql`${table.kind} in ('todo', 'procurement', 'approval', 'data_entry', 'customer_followup', 'review')`,
+    ),
+    check(
+      'tasks_assignee_role_check',
+      sql`${table.assigneeRole} is null or ${table.assigneeRole} in ('admin', 'manager', 'office')`,
+    ),
+    check('tasks_created_via_check', sql`${table.createdVia} in ('dashboard', 'whatsapp', 'desk', 'system')`),
+    uniqueIndex('tasks_subject_kind')
+      .on(table.subjectType, table.subjectId, table.kind)
+      .where(sql`${table.subjectType} is not null and ${table.status} <> 'cancelled'`),
+    index('tasks_wa_message').on(table.waMessageId),
   ],
 )
 
-export const whatsappMessages = pgTable('whatsapp_messages', {
-  id: text('id').primaryKey(),
-  evolutionMessageId: text('evolution_message_id').notNull().unique(),
-  remoteJid: text('remote_jid').notNull(),
-  fromMe: boolean('from_me').notNull(),
-  hasPdf: boolean('has_pdf').notNull(),
-  body: text('body'),
-  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+export const whatsappMessages = pgTable(
+  'whatsapp_messages',
+  {
+    id: text('id').primaryKey(),
+    evolutionMessageId: text('evolution_message_id').notNull().unique(),
+    remoteJid: text('remote_jid').notNull(),
+    fromMe: boolean('from_me').notNull(),
+    hasPdf: boolean('has_pdf').notNull(),
+    body: text('body'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    senderJid: text('sender_jid'),
+    quotedId: text('quoted_id'),
+    kind: text('kind').notNull().default('text'),
+    purpose: text('purpose'),
+    subjectType: text('subject_type'),
+    subjectId: text('subject_id'),
+    status: text('status'),
+    idempotencyKey: text('idempotency_key').unique(),
+  },
+  (table) => [
+    check('whatsapp_messages_kind_check', sql`${table.kind} in ('text', 'document', 'image', 'reaction', 'other')`),
+    check(
+      'whatsapp_messages_status_check',
+      sql`${table.status} is null or ${table.status} in ('received', 'sending', 'sent', 'uncertain', 'failed')`,
+    ),
+    index('whatsapp_messages_subject').on(table.subjectType, table.subjectId),
+  ],
+)
+
+export const waIdentities = pgTable('wa_identities', {
+  lid: text('lid').primaryKey(),
+  phone: text('phone').notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+})
+
+export const jobs = pgTable(
+  'jobs',
+  {
+    id: text('id').primaryKey(),
+    kind: text('kind').notNull(),
+    payload: jsonb('payload').$type<Record<string, unknown>>().notNull().default({}),
+    status: text('status').notNull().default('queued'),
+    runAfter: timestamp('run_after', { withTimezone: true }).notNull().defaultNow(),
+    lockedUntil: timestamp('locked_until', { withTimezone: true }),
+    attempts: integer('attempts').notNull().default(0),
+    maxAttempts: integer('max_attempts').notNull().default(5),
+    idempotencyKey: text('idempotency_key').unique(),
+    lastError: text('last_error'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    check('jobs_status_check', sql`${table.status} in ('queued', 'running', 'done', 'failed', 'cancelled')`),
+    index('jobs_ready').on(table.status, table.runAfter),
+  ],
+)
+
+export const chatContext = pgTable('chat_context', {
+  chatJid: text('chat_jid').primaryKey(),
+  subjectType: text('subject_type').notNull(),
+  subjectId: text('subject_id').notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 })
 
 export const availabilitySql = sql`

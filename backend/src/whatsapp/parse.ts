@@ -1,8 +1,18 @@
+import type { MessageKind } from '../db/types'
+import { isBotEcho } from './brand'
 import { chatNumber, phoneDigits, phoneFromPayload, qrFromPayload } from './qr'
 
 export type PdfAttachment = {
   fileName: string
   mimeType: string
+}
+
+export type Reaction = {
+  targetId: string
+  /** An empty emoji means the reaction was removed. */
+  emoji: string
+  targetFromMe: boolean | null
+  targetRemoteJid: string | null
 }
 
 export type IncomingMessage = {
@@ -11,17 +21,29 @@ export type IncomingMessage = {
   fromMe: boolean
   text: string | null
   quotedText: string | null
+  quotedId: string | null
+  quotedParticipant: string | null
   mentionedJids: string[]
   participantJid: string | null
   participantAltJid: string | null
   aliasJid: string | null
   control: boolean
+  kind: MessageKind
+  reaction: Reaction | null
   pdf: PdfAttachment | null
   raw: unknown
   embeddedBase64: string | null
 }
 
 export type ChatKind = 'self' | 'personal' | 'group'
+
+export type BotMode = 'personal' | 'dedicated'
+
+export type AudienceOptions = {
+  /** The message reacts to or quotes a message the bot sent. */
+  targetsBot?: boolean
+  botMode?: BotMode
+}
 
 export type WebhookEvent =
   | { type: 'qr'; qr: string | null }
@@ -48,7 +70,21 @@ export function isPersonalJid(jid: string): boolean {
 function isControlMessage(container: Record<string, unknown>): boolean {
   const message = record(container.message)
   if (!message) return false
-  return Boolean(message.reactionMessage || message.protocolMessage || message.pollUpdateMessage)
+  return Boolean(message.protocolMessage || message.pollUpdateMessage)
+}
+
+function readReaction(container: Record<string, unknown>): Reaction | null {
+  const reaction = record(record(container.message)?.reactionMessage)
+  if (!reaction) return null
+  const key = record(reaction.key)
+  const targetId = stringOf(key?.id)
+  if (!targetId) return null
+  return {
+    targetId,
+    emoji: typeof reaction.text === 'string' ? reaction.text : '',
+    targetFromMe: typeof key?.fromMe === 'boolean' ? key.fromMe : null,
+    targetRemoteJid: stringOf(key?.remoteJid),
+  }
 }
 
 function findDocument(message: Record<string, unknown>): Record<string, unknown> | null {
@@ -72,17 +108,21 @@ function readPdf(container: Record<string, unknown> | null): PdfAttachment | nul
   return { fileName, mimeType: mime || 'application/pdf' }
 }
 
-function contextInfos(message: Record<string, unknown>): Record<string, unknown>[] {
+function contextInfos(container: Record<string, unknown>): Record<string, unknown>[] {
   const found: Record<string, unknown>[] = []
   const push = (value: unknown) => {
     const info = record(value)
     if (info) found.push(info)
   }
+  push(container.contextInfo)
+  const message = record(container.message)
+  if (!message) return found
   push(message.contextInfo)
   push(record(message.extendedTextMessage)?.contextInfo)
   push(findDocument(message)?.contextInfo)
   push(record(message.imageMessage)?.contextInfo)
   push(record(message.videoMessage)?.contextInfo)
+  push(record(message.documentWithCaptionMessage)?.contextInfo)
   return found
 }
 
@@ -103,9 +143,7 @@ function quotedBody(quoted: Record<string, unknown>): string | null {
 }
 
 function readQuotedText(container: Record<string, unknown>): string | null {
-  const message = record(container.message)
-  if (!message) return null
-  for (const info of contextInfos(message)) {
+  for (const info of contextInfos(container)) {
     const quoted = record(info.quotedMessage)
     const text = quoted ? quotedBody(quoted) : null
     if (text) return text
@@ -113,11 +151,17 @@ function readQuotedText(container: Record<string, unknown>): string | null {
   return null
 }
 
+function readQuote(container: Record<string, unknown>): { id: string | null; participant: string | null } {
+  for (const info of contextInfos(container)) {
+    const id = stringOf(info.stanzaId)
+    if (id) return { id, participant: stringOf(info.participant) }
+  }
+  return { id: null, participant: null }
+}
+
 function readMentions(container: Record<string, unknown>): string[] {
-  const message = record(container.message)
-  if (!message) return []
   const mentions = new Set<string>()
-  for (const info of contextInfos(message)) {
+  for (const info of contextInfos(container)) {
     for (const jid of stringList(info.mentionedJid)) mentions.add(jid)
   }
   return [...mentions]
@@ -134,6 +178,15 @@ function readText(container: Record<string, unknown>): string | null {
     stringOf(record(message.imageMessage)?.caption) ??
     null
   )
+}
+
+function readKind(container: Record<string, unknown>, text: string | null): MessageKind {
+  const message = record(container.message)
+  if (!message) return 'other'
+  if (message.reactionMessage) return 'reaction'
+  if (findDocument(message)) return 'document'
+  if (message.imageMessage) return 'image'
+  return text ? 'text' : 'other'
 }
 
 function embeddedBase64(container: Record<string, unknown>): string | null {
@@ -181,19 +234,25 @@ export function parseWebhook(body: unknown): WebhookEvent {
   const id = stringOf(key?.id)
   const remoteJid = stringOf(key?.remoteJid)
   if (!id || !remoteJid) return { type: 'ignore' }
+  const text = readText(message)
+  const quote = readQuote(message)
   return {
     type: 'message',
     message: {
       id,
       remoteJid,
       fromMe: key?.fromMe === true,
-      text: readText(message),
+      text,
       quotedText: readQuotedText(message),
+      quotedId: quote.id,
+      quotedParticipant: quote.participant,
       mentionedJids: readMentions(message),
       participantJid: stringOf(key?.participant) ?? stringOf(message.participant),
       participantAltJid: stringOf(key?.participantAlt) ?? stringOf(message.participantAlt),
       aliasJid: stringOf(key?.remoteJidAlt),
       control: isControlMessage(message),
+      kind: readKind(message, text),
+      reaction: readReaction(message),
       pdf: readPdf(message),
       raw: message,
       embeddedBase64: embeddedBase64(message),
@@ -237,13 +296,25 @@ export function mentionsTierraBot(message: IncomingMessage, phoneNumber: string 
   return new RegExp(`@\\+?${phone}(?!\\d)`).test(text)
 }
 
+const READ_RECEIPT_EMOJI = '👀'
+
+function isEcho(message: IncomingMessage, botMode: BotMode): boolean {
+  if (!message.fromMe) return false
+  if (botMode === 'dedicated') return true
+  if (isBotEcho(message.text)) return true
+  return message.reaction?.emoji === READ_RECEIPT_EMOJI
+}
+
 export function audienceFor(
   message: IncomingMessage,
   phoneNumber: string | null,
+  options: AudienceOptions = {},
 ): ChatKind | 'ignore' {
-  if (message.control) return 'ignore'
+  const targetsBot = options.targetsBot ?? false
+  if (message.control || isEcho(message, options.botMode ?? 'personal')) return 'ignore'
+  if (message.reaction && !targetsBot) return 'ignore'
   if (isGroupJid(message.remoteJid)) {
-    return mentionsTierraBot(message, phoneNumber) ? 'group' : 'ignore'
+    return targetsBot || mentionsTierraBot(message, phoneNumber) ? 'group' : 'ignore'
   }
   const personal =
     isPersonalJid(message.remoteJid) || (message.aliasJid ? isPersonalJid(message.aliasJid) : false)

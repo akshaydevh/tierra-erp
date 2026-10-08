@@ -1,4 +1,16 @@
-export type Role = 'admin' | 'office'
+export const ROLES = ['admin', 'manager', 'office'] as const
+export type Role = (typeof ROLES)[number]
+
+export function asRole(value: string): Role {
+  if ((ROLES as readonly string[]).includes(value)) return value as Role
+  throw new Error(`Unknown role ${value}`)
+}
+
+export function roleLabel(role: Role): string {
+  if (role === 'admin') return 'Admin'
+  if (role === 'manager') return 'Manager'
+  return 'Office'
+}
 export type OrderStatus = 'open' | 'closed'
 export type OrderSource = 'seed' | 'whatsapp' | 'desk'
 
@@ -20,7 +32,23 @@ export const TASK_CATEGORIES = [
 ] as const
 
 export type TaskCategory = (typeof TASK_CATEGORIES)[number]
-export type TaskStatus = 'todo' | 'doing' | 'done'
+export type TaskStatus = 'todo' | 'doing' | 'done' | 'cancelled'
+
+export const TASK_KINDS = ['todo', 'procurement', 'approval', 'data_entry', 'customer_followup', 'review'] as const
+export type TaskKind = (typeof TASK_KINDS)[number]
+
+export const TASK_VIA = ['dashboard', 'whatsapp', 'desk', 'system'] as const
+export type TaskVia = (typeof TASK_VIA)[number]
+
+export function asTaskKind(value: string): TaskKind {
+  if ((TASK_KINDS as readonly string[]).includes(value)) return value as TaskKind
+  throw new Error(`Unknown task kind ${value}`)
+}
+
+export function asTaskVia(value: string): TaskVia {
+  if ((TASK_VIA as readonly string[]).includes(value)) return value as TaskVia
+  throw new Error(`Unknown task source ${value}`)
+}
 
 export function asTaskCategory(value: string): TaskCategory {
   if ((TASK_CATEGORIES as readonly string[]).includes(value)) return value as TaskCategory
@@ -28,7 +56,7 @@ export function asTaskCategory(value: string): TaskCategory {
 }
 
 export function asTaskStatus(value: string): TaskStatus {
-  if (value === 'todo' || value === 'doing' || value === 'done') return value
+  if (value === 'todo' || value === 'doing' || value === 'done' || value === 'cancelled') return value
   throw new Error(`Unknown task status ${value}`)
 }
 
@@ -37,10 +65,37 @@ export type TaskRecord = {
   title: string
   category: TaskCategory
   status: TaskStatus
+  kind: TaskKind
   assigneeId: string | null
   assigneeName: string | null
+  /** The role the task is addressed to. The holder (assigneeId) is resolved from it. */
+  assigneeRole: Role | null
+  description: string | null
+  dueAt: string | null
+  subjectType: string | null
+  subjectId: string | null
+  notifiedAt: string | null
+  /** Evolution message id of the WhatsApp notice for this task. */
+  waMessageId: string | null
+  createdVia: TaskVia
   createdBy: string
+  createdByName: string | null
   createdAt: string
+  completedAt: string | null
+}
+
+export type NewTask = {
+  title: string
+  category: TaskCategory
+  kind?: TaskKind
+  assigneeId: string | null
+  assigneeRole?: Role | null
+  description?: string | null
+  dueAt?: Date | null
+  subjectType?: string | null
+  subjectId?: string | null
+  createdVia?: TaskVia
+  createdBy: string
 }
 
 export type User = {
@@ -132,12 +187,70 @@ export type WhatsappConnection = {
   phoneNumber: string | null
 }
 
+export const MESSAGE_KINDS = ['text', 'document', 'image', 'reaction', 'other'] as const
+export type MessageKind = (typeof MESSAGE_KINDS)[number]
+export type MessageStatus = 'received' | 'sending' | 'sent' | 'uncertain' | 'failed'
+
 export type ClaimedMessage = {
   evolutionMessageId: string
   remoteJid: string
   fromMe: boolean
   hasPdf: boolean
   body: string | null
+  senderJid?: string | null
+  quotedId?: string | null
+  kind?: MessageKind
+  /** Why the bot sent it, e.g. 'reply', 'task_notice', 'test_pdf'. Null for inbound. */
+  purpose?: string | null
+  subjectType?: string | null
+  subjectId?: string | null
+  status?: MessageStatus | null
+  idempotencyKey?: string | null
+}
+
+/** A row of the WhatsApp message registry, looked up by Evolution message id. */
+export type StoredMessage = {
+  evolutionMessageId: string
+  remoteJid: string
+  fromMe: boolean
+  body: string | null
+  kind: MessageKind
+  purpose: string | null
+  subjectType: string | null
+  subjectId: string | null
+  createdAt: string
+}
+
+export const JOB_STATUSES = ['queued', 'running', 'done', 'failed', 'cancelled'] as const
+export type JobStatus = (typeof JOB_STATUSES)[number]
+
+export type NewJob = {
+  kind: string
+  payload: Record<string, unknown>
+  runAfter?: Date
+  /** A second enqueue with the same key is dropped. */
+  idempotencyKey?: string | null
+  maxAttempts?: number
+}
+
+export type JobRecord = {
+  id: string
+  kind: string
+  payload: Record<string, unknown>
+  status: JobStatus
+  attempts: number
+  maxAttempts: number
+  runAfter: string
+  lockedUntil: string | null
+  idempotencyKey: string | null
+  lastError: string | null
+}
+
+export type ChatContext = {
+  chatJid: string
+  subjectType: string
+  subjectId: string
+  updatedAt: string
 }
 
 export type NewOrderLine = {

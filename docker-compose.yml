@@ -1,6 +1,6 @@
 services:
   postgres:
-    image: postgres:16-alpine
+    image: postgres:18-alpine
     environment:
       POSTGRES_USER: tierra
       POSTGRES_PASSWORD: tierra
@@ -8,7 +8,7 @@ services:
     ports:
       - "5432:5432"
     volumes:
-      - pgdata:/var/lib/postgresql/data
+      - pgdata:/var/lib/postgresql
       - ./docker/postgres/init.sql:/docker-entrypoint-initdb.d/01-evolution.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U tierra -d tierra"]
@@ -57,6 +57,10 @@ services:
       OPENAI_BASE_URL: ${OPENAI_BASE_URL:-https://api.openai.com/v1}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4o-mini}
+      TYPESAFE_API_KEY: ${TYPESAFE_API_KEY:-}
+      WHATSAPP_BOT_MODE: ${WHATSAPP_BOT_MODE:-personal}
+      SEED_DEMO: "1"
+      SEED_PASSWORD: ${SEED_PASSWORD:-tierra-dev}
     ports:
       - "3002:3002"
 

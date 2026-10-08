@@ -64,6 +64,13 @@
       "when": 1791400000000,
       "tag": "0008_tasks",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1791500000000,
+      "tag": "0009_p0_roles_jobs",
+      "breakpoints": true
     }
   ]
 }

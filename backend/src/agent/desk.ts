@@ -76,6 +76,7 @@ export async function postDeskTurn(
   const accounts = await deps.store.listAccountLinks()
   const link = accounts.find((account) => account.id === user.id)
   const speaker: Person = {
+    userId: user.id,
     name: user.name,
     role: user.role,
     phoneNumber: link?.phoneNumber ?? '',
@@ -86,11 +87,15 @@ export async function postDeskTurn(
     fromMe: true,
     text: text || null,
     quotedText: null,
+    quotedId: null,
+    quotedParticipant: null,
     mentionedJids: [],
     participantJid: null,
     participantAltJid: null,
     aliasJid: null,
     control: false,
+    kind: pdf ? 'document' : 'text',
+    reaction: null,
     pdf: pdf ? { fileName: pdf.filename, mimeType: 'application/pdf' } : null,
     raw: null,
     embeddedBase64: pdf ? pdf.content.toString('base64') : null,

@@ -3,6 +3,7 @@ import { phoneDigits } from './qr'
 import type { ChatKind, IncomingMessage } from './parse'
 
 export type Person = {
+  userId: string
   name: string
   role: Role
   phoneNumber: string
@@ -10,6 +11,13 @@ export type Person = {
 
 type LinkedAccount = AccountLink & { phoneNumber: string }
 
+/** Same number, digit for digit. Use this to decide who someone is. */
+export function phonesExact(a: string | null | undefined, b: string | null | undefined): boolean {
+  const left = phoneDigits(a)
+  return left.length >= 8 && left === phoneDigits(b)
+}
+
+/** Loose match tolerant of missing country codes. For display and linking only. */
 export function phonesMatch(stored: string, candidate: string | null | undefined): boolean {
   const left = phoneDigits(stored)
   const right = phoneDigits(candidate)
@@ -33,7 +41,7 @@ function matchAccount(accounts: LinkedAccount[], candidates: Array<string | null
 }
 
 function toPerson(account: LinkedAccount): Person {
-  return { name: account.name, role: account.role, phoneNumber: account.phoneNumber }
+  return { userId: account.id, name: account.name, role: account.role, phoneNumber: account.phoneNumber }
 }
 
 function numbersInText(text: string | null): string[] {

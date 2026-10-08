@@ -1,7 +1,8 @@
 'use client'
 
+import { useRouter } from 'next/navigation'
 import { useCallback, useEffect, useState } from 'react'
-import type { AccountLink, WhatsappConnection } from '@/lib/types'
+import { ROLES, roleLabel, type AccountLink, type Me, type Role, type WhatsappConnection } from '@/lib/types'
 
 function statusLabel(status: WhatsappConnection['status']): string {
   if (status === 'connected') return 'Connected'
@@ -15,14 +16,18 @@ function pillClass(status: WhatsappConnection['status']): string {
   return 'pill grey'
 }
 
-function roleLabel(role: AccountLink['role']): string {
-  return role === 'admin' ? 'Admin' : 'Office'
+function rolePillClass(role: Role): string {
+  if (role === 'admin') return 'pill ok'
+  if (role === 'manager') return 'pill ink'
+  return 'pill grey'
 }
 
-function Relations({ canManage }: { canManage: boolean }) {
+function Relations({ me, canManage }: { me: Me; canManage: boolean }) {
+  const router = useRouter()
   const [accounts, setAccounts] = useState<AccountLink[]>([])
   const [drafts, setDrafts] = useState<Record<string, string>>({})
   const [error, setError] = useState('')
+  const [roleErrors, setRoleErrors] = useState<Record<string, string>>({})
   const [pendingId, setPendingId] = useState<string | null>(null)
 
   const load = useCallback(async () => {
@@ -58,6 +63,29 @@ function Relations({ canManage }: { canManage: boolean }) {
     })
   }
 
+  async function changeRole(account: AccountLink, role: Role) {
+    if (role === account.role) return
+    const admin = accounts.find((entry) => entry.role === 'admin' && entry.id !== account.id)
+    const transfer = role === 'admin' && Boolean(admin)
+    if (transfer && admin && !window.confirm(`Make ${account.name} the admin? ${admin.name} becomes Manager.`)) return
+    setPendingId(account.id)
+    setRoleErrors((current) => ({ ...current, [account.id]: '' }))
+    const response = await fetch(`/api/users/${account.id}/role`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(transfer ? { role, transfer: true } : { role }),
+    })
+    setPendingId(null)
+    const body = (await response.json().catch(() => null)) as { error?: string; accounts?: AccountLink[] } | null
+    if (!response.ok) {
+      setRoleErrors((current) => ({ ...current, [account.id]: body?.error ?? 'Could not change that role' }))
+      return
+    }
+    if (body?.accounts) setAccounts(body.accounts)
+    else await load()
+    router.refresh()
+  }
+
   return (
     <section className="sec">
       <div className="sechead">
@@ -77,13 +105,41 @@ function Relations({ canManage }: { canManage: boolean }) {
             const value = drafts[account.id] ?? account.phoneNumber ?? ''
             const pending = pendingId === account.id
             return (
-              <div className="rel" key={account.id}>
+              <div className={canManage ? 'rel withrole' : 'rel'} key={account.id}>
                 <div>
-                  <b>{account.name}</b>
-                  <div className="stamp">
-                    {roleLabel(account.role)} · {account.email}
+                  <div className="relname">
+                    <b>{account.name}</b>
+                    <span className={rolePillClass(account.role)}>{roleLabel(account.role)}</span>
                   </div>
+                  <div className="stamp">
+                    {account.email}
+                    {account.id === me.id ? ' · You' : ''}
+                  </div>
+                  {roleErrors[account.id] ? (
+                    <p className="formerror" role="alert" style={{ marginTop: 6 }}>
+                      {roleErrors[account.id]}
+                    </p>
+                  ) : null}
                 </div>
+                {canManage ? (
+                  <div className="field">
+                    <label className="sr" htmlFor={`role-${account.id}`}>
+                      Role for {account.name}
+                    </label>
+                    <select
+                      id={`role-${account.id}`}
+                      value={account.role}
+                      disabled={pending}
+                      onChange={(event) => void changeRole(account, event.target.value as Role)}
+                    >
+                      {ROLES.map((role) => (
+                        <option key={role} value={role}>
+                          {roleLabel(role)}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                ) : null}
                 <div className="field">
                   <label className="sr" htmlFor={`phone-${account.id}`}>
                     Phone for {account.name}
@@ -123,13 +179,18 @@ function Relations({ canManage }: { canManage: boolean }) {
           })}
         </div>
         {error ? <p className="formerror" style={{ marginTop: 16 }}>{error}</p> : null}
-        {canManage ? null : <p className="stamp" style={{ marginTop: 16 }}>An admin can link phone numbers.</p>}
+        {canManage ? null : (
+          <p className="stamp" style={{ marginTop: 16 }}>
+            An admin can link phone numbers and change roles.
+          </p>
+        )}
       </article>
     </section>
   )
 }
 
-export function SettingsPanel({ canManage }: { canManage: boolean }) {
+export function SettingsPanel({ me }: { me: Me }) {
+  const canManage = me.role === 'admin'
   const [connection, setConnection] = useState<WhatsappConnection | null>(null)
   const [error, setError] = useState('')
   const [pending, setPending] = useState(false)
@@ -227,7 +288,7 @@ export function SettingsPanel({ canManage }: { canManage: boolean }) {
         )}
       </article>
     </section>
-    <Relations canManage={canManage} />
+    <Relations me={me} canManage={canManage} />
     </>
   )
 }

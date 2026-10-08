@@ -1,10 +1,14 @@
 import { notFound } from 'next/navigation'
-import { placeholderTitle } from '@/lib/nav'
+import { api } from '@/lib/api'
+import { canOpen, placeholderTitle } from '@/lib/nav'
+import type { Me } from '@/lib/types'
 
 export default async function PlaceholderPage({ params }: { params: Promise<{ module: string }> }) {
   const { module } = await params
   const title = placeholderTitle(module)
   if (!title) notFound()
+  const { user } = await api<{ user: Me }>('/api/auth/me')
+  if (!canOpen(user.role, `/${module}`)) notFound()
   return (
     <section className="sec">
       <div className="card empty">

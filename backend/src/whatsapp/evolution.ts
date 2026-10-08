@@ -12,13 +12,33 @@ export type SentText = {
   messageId: string | null
 }
 
+export type MediaMessage = {
+  number: string
+  mediatype: 'document' | 'image'
+  mimetype: string
+  fileName: string
+  caption?: string
+  /** Raw base64 (a data: prefix is stripped) or an https URL. */
+  media: string
+}
+
+export type WhatsappGroup = {
+  id: string
+  subject: string
+  size: number
+}
+
 export interface EvolutionClient {
   createInstance(): Promise<{ qrBase64: string | null }>
   deleteInstance(): Promise<void>
   sendText(number: string, text: string, mentionPhones?: string[]): Promise<SentText>
   sendReaction(remoteJid: string, messageId: string, fromMe: boolean, emoji: string): Promise<void>
+  sendMedia(media: MediaMessage): Promise<SentText>
   downloadMedia(message: unknown): Promise<DownloadedMedia>
   fetchOwnerPhone(): Promise<string | null>
+  fetchAllGroups(): Promise<WhatsappGroup[]>
+  /** Points the existing instance's webhook at this backend. */
+  ensureWebhook(): Promise<void>
 }
 
 function record(value: unknown): Record<string, unknown> | null {
@@ -38,6 +58,42 @@ export function messageIdFrom(value: unknown): string | null {
   return typeof root.id === 'string' && root.id.length > 0 ? root.id : null
 }
 
+function mediaPayload(media: string): string {
+  return media.replace(/^data:[^,]*;base64,/, '')
+}
+
+function groupRows(value: unknown): unknown[] {
+  if (Array.isArray(value)) return value
+  const root = record(value)
+  if (!root) return []
+  for (const key of ['groups', 'data', 'response']) {
+    if (Array.isArray(root[key])) return root[key]
+  }
+  return []
+}
+
+function groupSize(row: Record<string, unknown>): number {
+  for (const key of ['size', 'participantsCount', 'participantCount']) {
+    const value = row[key]
+    if (typeof value === 'number' && Number.isFinite(value)) return value
+  }
+  return Array.isArray(row.participants) ? row.participants.length : 0
+}
+
+export function groupsFrom(value: unknown): WhatsappGroup[] {
+  return groupRows(value).flatMap((item) => {
+    const row = record(item)
+    const id = [row?.id, row?.jid, row?.remoteJid].find(
+      (candidate): candidate is string => typeof candidate === 'string' && candidate.endsWith('@g.us'),
+    )
+    if (!row || !id) return []
+    const subject = [row.subject, row.name].find(
+      (candidate): candidate is string => typeof candidate === 'string' && candidate.length > 0,
+    )
+    return [{ id, subject: subject ?? id, size: groupSize(row) }]
+  })
+}
+
 type EvolutionEnv = {
   evolutionUrl: string
   evolutionApiKey: string
@@ -54,7 +110,7 @@ export class HttpEvolution implements EvolutionClient {
       enabled: true,
       url: `${base}/webhooks/evolution`,
       byEvents: false,
-      base64: true,
+      base64: false,
       events: ['QRCODE_UPDATED', 'CONNECTION_UPDATE', 'MESSAGES_UPSERT'],
       headers: { 'x-webhook-secret': this.env.webhookSecret },
     }
@@ -97,11 +153,15 @@ export class HttpEvolution implements EvolutionClient {
         webhook: this.webhookBody(),
       }),
     })
+    await this.ensureWebhook()
+    return { qrBase64: qrFromPayload(created) }
+  }
+
+  async ensureWebhook(): Promise<void> {
     await this.request(`/webhook/set/${INSTANCE_NAME}`, {
       method: 'POST',
       body: JSON.stringify({ webhook: this.webhookBody() }),
     })
-    return { qrBase64: qrFromPayload(created) }
   }
 
   async sendText(number: string, text: string, mentionPhones: string[] = []): Promise<SentText> {
@@ -121,6 +181,26 @@ export class HttpEvolution implements EvolutionClient {
         reaction: emoji,
       }),
     })
+  }
+
+  async sendMedia(media: MediaMessage): Promise<SentText> {
+    const data = await this.request(`/message/sendMedia/${INSTANCE_NAME}`, {
+      method: 'POST',
+      body: JSON.stringify({
+        number: media.number,
+        mediatype: media.mediatype,
+        mimetype: media.mimetype,
+        fileName: media.fileName,
+        caption: media.caption,
+        media: mediaPayload(media.media),
+      }),
+    })
+    return { messageId: messageIdFrom(data) }
+  }
+
+  async fetchAllGroups(): Promise<WhatsappGroup[]> {
+    const data = await this.request(`/group/fetchAllGroups/${INSTANCE_NAME}?getParticipants=false`)
+    return groupsFrom(data)
   }
 
   async fetchOwnerPhone(): Promise<string | null> {

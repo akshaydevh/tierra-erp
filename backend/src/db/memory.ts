@@ -4,9 +4,13 @@ import type { RecentMessage, Store, ThreadMessage } from './store'
 import type {
   AccountLink,
   Balance,
+  ChatContext,
   ClaimedMessage,
   Customer,
   Item,
+  JobRecord,
+  NewJob,
+  NewTask,
   NewOrderLine,
   OrderLineRecord,
   OrderRecord,
@@ -18,7 +22,7 @@ import type {
   PublicUser,
   Role,
   StoredDocument,
-  TaskCategory,
+  StoredMessage,
   TaskRecord,
   TaskStatus,
   User,
@@ -27,6 +31,7 @@ import type {
 import { orderSourceForThread, toPublicUser } from './types'
 
 type SessionRow = { tokenHash: string; userId: string; expiresAt: Date }
+type JobRow = JobRecord & { seq: number }
 type MessageRow = ClaimedMessage & { createdAt: string }
 type DocumentRow = StoredDocument & { id: string; orderId: string | null; messageId: string | null }
 type StoredProcurement = ProcurementOrderRecord & { pendingOrderId: string | null }
@@ -61,6 +66,9 @@ export class MemoryStore implements Store {
   messages: MessageRow[] = []
   tasks: TaskRecord[] = []
   relations: Array<{ userId: string; phoneNumber: string }> = []
+  identities = new Map<string, string>()
+  chatContexts = new Map<string, ChatContext>()
+  jobs: JobRow[] = []
   whatsapp: WhatsappConnection = {
     instanceName: 'tierra',
     status: 'disconnected',
@@ -142,6 +150,14 @@ export class MemoryStore implements Store {
     this.relations = this.relations.filter((row) => row.userId !== userId)
   }
 
+  async updateUserRole(userId: string, role: Role): Promise<'ok' | 'not_found' | 'admin_taken'> {
+    const user = this.users.find((row) => row.id === userId)
+    if (!user) return 'not_found'
+    if (role === 'admin' && this.users.some((row) => row.role === 'admin' && row.id !== userId)) return 'admin_taken'
+    user.role = role
+    return 'ok'
+  }
+
   async listCustomers(): Promise<Customer[]> {
     return this.customers.map((row) => ({ ...row }))
   }
@@ -187,8 +203,44 @@ export class MemoryStore implements Store {
     if (this.messages.some((row) => row.evolutionMessageId === message.evolutionMessageId)) {
       return false
     }
+    if (message.idempotencyKey && this.messages.some((row) => row.idempotencyKey === message.idempotencyKey)) {
+      throw new Error(`Duplicate message idempotency key ${message.idempotencyKey}`)
+    }
     this.messages.push({ ...message, createdAt: new Date().toISOString() })
     return true
+  }
+
+  async findMessage(evolutionMessageId: string): Promise<StoredMessage | null> {
+    const row = this.messages.find((message) => message.evolutionMessageId === evolutionMessageId)
+    if (!row) return null
+    return {
+      evolutionMessageId: row.evolutionMessageId,
+      remoteJid: row.remoteJid,
+      fromMe: row.fromMe,
+      body: row.body,
+      kind: row.kind ?? 'text',
+      purpose: row.purpose ?? null,
+      subjectType: row.subjectType ?? null,
+      subjectId: row.subjectId ?? null,
+      createdAt: row.createdAt,
+    }
+  }
+
+  async saveIdentity(lid: string, phone: string): Promise<void> {
+    this.identities.set(lid, phone)
+  }
+
+  async phoneForLid(lid: string): Promise<string | null> {
+    return this.identities.get(lid) ?? null
+  }
+
+  async getChatContext(chatJid: string): Promise<ChatContext | null> {
+    const context = this.chatContexts.get(chatJid)
+    return context ? { ...context } : null
+  }
+
+  async setChatContext(chatJid: string, subjectType: string, subjectId: string): Promise<void> {
+    this.chatContexts.set(chatJid, { chatJid, subjectType, subjectId, updatedAt: new Date().toISOString() })
   }
 
   async listRecentMessages(remoteJids: string[], limit: number): Promise<RecentMessage[]> {
@@ -268,7 +320,7 @@ export class MemoryStore implements Store {
         quantityKg: String(shortage.quantity),
         unit: shortage.unit,
         assigneeId: input.assigneeId,
-        assigneeName: assignee?.name ?? 'Joshy',
+        assigneeName: assignee?.name ?? '',
         createdAt,
       })
     }
@@ -347,7 +399,7 @@ export class MemoryStore implements Store {
       quantityKg: production.bananaKg,
       unit: 'kg',
       assigneeId: production.assigneeId,
-      assigneeName: assignee?.name ?? 'Joshy',
+      assigneeName: assignee?.name ?? '',
       createdAt,
     })
     return { id: orderId, poNumber: pending.poNumber, productionEntryId, procurementOrderId }
@@ -429,32 +481,77 @@ export class MemoryStore implements Store {
       quantityKg: input.production.bananaKg,
       unit: 'kg',
       assigneeId: input.production.assigneeId,
-      assigneeName: assignee?.name ?? 'Joshy',
+      assigneeName: assignee?.name ?? '',
       createdAt,
     })
     return { id, productionEntryId, procurementOrderId }
   }
 
-  async listTasks(): Promise<TaskRecord[]> {
-    return [...this.tasks].sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+  private userName(id: string | null): string | null {
+    return id ? (this.users.find((user) => user.id === id)?.name ?? null) : null
   }
 
-  async createTask(input: {
-    title: string
-    category: TaskCategory
-    assigneeId: string | null
-    createdBy: string
-  }): Promise<TaskRecord> {
+  private newestFirst(tasks: TaskRecord[]): TaskRecord[] {
+    return [...tasks].sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+  }
+
+  async listTasks(): Promise<TaskRecord[]> {
+    return this.newestFirst(this.tasks)
+  }
+
+  async getTask(id: string): Promise<TaskRecord | null> {
+    return this.tasks.find((task) => task.id === id) ?? null
+  }
+
+  async listOpenTasksForUser(userId: string): Promise<TaskRecord[]> {
+    return this.newestFirst(
+      this.tasks.filter((task) => task.assigneeId === userId && (task.status === 'todo' || task.status === 'doing')),
+    )
+  }
+
+  async findTaskByMessage(waMessageId: string): Promise<TaskRecord | null> {
+    const task = this.tasks.find((row) => row.waMessageId === waMessageId)
+    if (task) return task
+    const notice = await this.findMessage(waMessageId)
+    if (notice?.subjectType !== 'task' || !notice.subjectId) return null
+    return this.getTask(notice.subjectId)
+  }
+
+  async createTask(input: NewTask): Promise<TaskRecord> {
+    const kind = input.kind ?? 'todo'
+    const subjectType = input.subjectType ?? null
+    const subjectId = input.subjectId ?? null
+    const existing = subjectType
+      ? this.tasks.find(
+          (task) =>
+            task.subjectType === subjectType &&
+            task.subjectId === subjectId &&
+            task.kind === kind &&
+            task.status !== 'cancelled',
+        )
+      : undefined
+    if (existing) return existing
     const assignee = input.assigneeId ? this.users.find((user) => user.id === input.assigneeId) : undefined
     const task: TaskRecord = {
       id: newId('tsk'),
       title: input.title.trim(),
       category: input.category,
       status: 'todo',
+      kind,
       assigneeId: assignee?.id ?? null,
       assigneeName: assignee?.name ?? null,
+      assigneeRole: input.assigneeRole ?? null,
+      description: input.description ?? null,
+      dueAt: input.dueAt?.toISOString() ?? null,
+      subjectType,
+      subjectId,
+      notifiedAt: null,
+      waMessageId: null,
+      createdVia: input.createdVia ?? 'dashboard',
       createdBy: input.createdBy,
+      createdByName: this.userName(input.createdBy),
       createdAt: new Date().toISOString(),
+      completedAt: null,
     }
     this.tasks.push(task)
     return task
@@ -464,16 +561,107 @@ export class MemoryStore implements Store {
     const task = this.tasks.find((row) => row.id === id)
     if (!task) return null
     task.status = status
+    task.completedAt = status === 'done' ? (task.completedAt ?? new Date().toISOString()) : null
     return task
   }
 
-  async updateTaskAssignee(id: string, assigneeId: string | null): Promise<TaskRecord | null> {
+  async updateTaskAssignment(
+    id: string,
+    assignment: { assigneeId: string | null; assigneeRole: Role | null },
+  ): Promise<TaskRecord | null> {
     const task = this.tasks.find((row) => row.id === id)
     if (!task) return null
-    const assignee = assigneeId ? this.users.find((user) => user.id === assigneeId) : undefined
-    if (assigneeId && !assignee) return null
+    const assignee = assignment.assigneeId ? this.users.find((user) => user.id === assignment.assigneeId) : undefined
+    if (assignment.assigneeId && !assignee) return null
+    if (task.assigneeId !== (assignee?.id ?? null)) {
+      task.notifiedAt = null
+      task.waMessageId = null
+    }
     task.assigneeId = assignee?.id ?? null
     task.assigneeName = assignee?.name ?? null
+    task.assigneeRole = assignment.assigneeRole
     return task
+  }
+
+  async markTaskNotified(id: string, waMessageId: string | null, at: Date): Promise<void> {
+    const task = this.tasks.find((row) => row.id === id)
+    if (!task) return
+    task.notifiedAt = at.toISOString()
+    task.waMessageId = waMessageId
+  }
+
+  private toJob({ seq: _seq, ...job }: JobRow): JobRecord {
+    return { ...job, payload: { ...job.payload } }
+  }
+
+  async enqueueJob(job: NewJob): Promise<JobRecord | null> {
+    const key = job.idempotencyKey ?? null
+    if (key && this.jobs.some((row) => row.idempotencyKey === key)) return null
+    const row: JobRow = {
+      id: newId('job'),
+      kind: job.kind,
+      payload: { ...job.payload },
+      status: 'queued',
+      attempts: 0,
+      maxAttempts: job.maxAttempts ?? 5,
+      runAfter: (job.runAfter ?? new Date()).toISOString(),
+      lockedUntil: null,
+      idempotencyKey: key,
+      lastError: null,
+      seq: this.jobs.length,
+    }
+    this.jobs.push(row)
+    return this.toJob(row)
+  }
+
+  async claimJobs(limit: number, leaseMs: number, now: Date): Promise<JobRecord[]> {
+    const lockedUntil = new Date(now.getTime() + leaseMs).toISOString()
+    const ready = this.jobs
+      .filter((job) => job.status === 'queued' && new Date(job.runAfter) <= now)
+      .sort((a, b) => a.runAfter.localeCompare(b.runAfter) || a.seq - b.seq)
+      .slice(0, Math.max(0, limit))
+    for (const job of ready) {
+      job.status = 'running'
+      job.attempts += 1
+      job.lockedUntil = lockedUntil
+    }
+    return ready.map((job) => this.toJob(job))
+  }
+
+  async completeJob(id: string): Promise<void> {
+    const job = this.jobs.find((row) => row.id === id)
+    if (!job) return
+    job.status = 'done'
+    job.lockedUntil = null
+  }
+
+  async failJob(id: string, error: string, retryAt: Date | null): Promise<void> {
+    const job = this.jobs.find((row) => row.id === id)
+    if (!job) return
+    job.status = retryAt ? 'queued' : 'failed'
+    if (retryAt) job.runAfter = retryAt.toISOString()
+    job.lockedUntil = null
+    job.lastError = error
+  }
+
+  async requeueExpiredJobs(now: Date): Promise<number> {
+    let requeued = 0
+    for (const job of this.jobs) {
+      if (job.status !== 'running' || !job.lockedUntil || new Date(job.lockedUntil) >= now) continue
+      job.lockedUntil = null
+      if (job.attempts >= job.maxAttempts) {
+        job.status = 'failed'
+        job.lastError = 'Lease expired'
+        continue
+      }
+      job.status = 'queued'
+      requeued += 1
+    }
+    return requeued
+  }
+
+  async getJob(id: string): Promise<JobRecord | null> {
+    const job = this.jobs.find((row) => row.id === id)
+    return job ? this.toJob(job) : null
   }
 }

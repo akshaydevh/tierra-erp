@@ -8,12 +8,18 @@ import type {
   OrderLineRecord,
   OrderRecord,
   AccountLink,
+  ChatContext,
+  JobRecord,
+  NewJob,
+  NewTask,
   ProcurementOrderRecord,
   ProductionEntryRecord,
   PendingConfirmation,
   ProductionPlan,
   PublicUser,
+  Role,
   StoredDocument,
+  StoredMessage,
   TaskCategory,
   TaskRecord,
   TaskStatus,
@@ -47,6 +53,8 @@ export interface Store {
   listAccountLinks(): Promise<AccountLink[]>
   saveRelation(input: { userId: string; phoneNumber: string }): Promise<void>
   deleteRelation(userId: string): Promise<void>
+  /** Changes a user's role. There is only ever one admin: giving admin to a second user returns 'admin_taken'. */
+  updateUserRole(userId: string, role: Role): Promise<'ok' | 'not_found' | 'admin_taken'>
 
   listCustomers(): Promise<Customer[]>
   listItems(): Promise<Item[]>
@@ -65,7 +73,14 @@ export interface Store {
     },
   ): Promise<WhatsappConnection>
 
+  /** Inserts a registry row. Returns false when that Evolution id is already stored (dedupe). */
   claimMessage(message: ClaimedMessage): Promise<boolean>
+  findMessage(evolutionMessageId: string): Promise<StoredMessage | null>
+  /** Remembers that a WhatsApp LID (e.g. 12345@lid) belongs to a phone (digits only). */
+  saveIdentity(lid: string, phone: string): Promise<void>
+  phoneForLid(lid: string): Promise<string | null>
+  getChatContext(chatJid: string): Promise<ChatContext | null>
+  setChatContext(chatJid: string, subjectType: string, subjectId: string): Promise<void>
   listRecentMessages(remoteJids: string[], limit: number): Promise<RecentMessage[]>
   listThread(remoteJid: string): Promise<ThreadMessage[]>
   releaseMessage(evolutionMessageId: string): Promise<void>
@@ -97,12 +112,35 @@ export interface Store {
   declinePendingOrder(id: string): Promise<{ poNumber: string } | null>
 
   listTasks(): Promise<TaskRecord[]>
-  createTask(input: {
-    title: string
-    category: TaskCategory
-    assigneeId: string | null
-    createdBy: string
-  }): Promise<TaskRecord>
+  getTask(id: string): Promise<TaskRecord | null>
+  /** Open (todo/doing) tasks held by this user, newest first. */
+  listOpenTasksForUser(userId: string): Promise<TaskRecord[]>
+  findTaskByMessage(waMessageId: string): Promise<TaskRecord | null>
+  /**
+   * Creates a task. When subjectType/subjectId are set, a second live task with the
+   * same (subjectType, subjectId, kind) is not created: the existing one is returned.
+   */
+  createTask(input: NewTask): Promise<TaskRecord>
+  /** Sets status; 'done' stamps completedAt, any other status clears it. */
   updateTaskStatus(id: string, status: TaskStatus): Promise<TaskRecord | null>
-  updateTaskAssignee(id: string, assigneeId: string | null): Promise<TaskRecord | null>
+  updateTaskAssignment(
+    id: string,
+    assignment: { assigneeId: string | null; assigneeRole: Role | null },
+  ): Promise<TaskRecord | null>
+  markTaskNotified(id: string, waMessageId: string | null, at: Date): Promise<void>
+
+  /** Returns null when a job with the same idempotencyKey already exists. */
+  enqueueJob(job: NewJob): Promise<JobRecord | null>
+  /**
+   * Atomically claims up to `limit` queued jobs whose runAfter <= now, oldest first,
+   * marking them running with lockedUntil = now + leaseMs and attempts + 1.
+   * Postgres uses FOR UPDATE SKIP LOCKED so two workers never claim the same job.
+   */
+  claimJobs(limit: number, leaseMs: number, now: Date): Promise<JobRecord[]>
+  completeJob(id: string): Promise<void>
+  /** retryAt null marks the job failed for good; otherwise it is re-queued for retryAt. */
+  failJob(id: string, error: string, retryAt: Date | null): Promise<void>
+  /** Re-queues running jobs whose lease expired. Returns how many. */
+  requeueExpiredJobs(now: Date): Promise<number>
+  getJob(id: string): Promise<JobRecord | null>
 }

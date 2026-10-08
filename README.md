@@ -14,6 +14,8 @@ Preview of Tierra Food India’s order desk. Customer purchase orders live in th
 docker compose up -d postgres
 ```
 
+Postgres is now 18. If you still have the old Postgres 16 volume, drop it first with `docker compose down -v`. This deletes the local data.
+
 In one terminal:
 
 ```sh
@@ -26,15 +28,23 @@ In another:
 cd frontend && cp .env.example .env && npm install && npm run dev
 ```
 
-The API listens on port 3002 and seeds the database on first boot. The site is http://localhost:3000.
+The API listens on port 3002. With `SEED_DEMO=1` (set in `.env.example` and in compose) it seeds an empty database on first boot. Production never sets it, so production never seeds. The site is http://localhost:3000.
 
-Preview password for every account: `tierra-dev`
+Preview password for every account: `tierra-dev`, or `SEED_PASSWORD` when set.
 
 | Email | Role |
 | --- | --- |
-| alex.thomas@tierra.test | Admin, can connect WhatsApp |
-| joshy@tierra.test | Admin, can connect WhatsApp |
+| alex.thomas@tierra.test | Admin, the only one. Can connect WhatsApp and change roles |
+| joshy@tierra.test | Manager, owns procurement |
 | anju@tierra.test | Office, can read orders and inventory |
+
+There is one admin at a time. Making someone else admin moves Alex to manager.
+
+To change a password on a live database:
+
+```sh
+cd backend && npm run set-password -- <email> <password>
+```
 
 Banana chips 80g is seeded at 40 pouches on hand with an open order for 100, so available stock is −60. A WhatsApp PDF that asks for that item is refused.
 
@@ -60,10 +70,22 @@ A PDF on a personal chat, in Message Yourself, or in a group message that mentio
 
 `TYPESAFE_API_KEY` is Jev, via the TypeSafe SDK. Jev chooses whether a text message is a dashboard question, a conversation, a request that still needs a PDF, or nothing to do. A PDF does not go through Jev. Without the key, PDFs still intake and text replies say Tierra Bot cannot decide yet.
 
+Tasks go to a role, not a person. Every new task is sent on WhatsApp to whoever holds that role. They finish it by replying *done* to the message or reacting 👍 to it, and the person who raised it is told.
+
+Send `test pdf` to Tierra Bot from a linked account to get a one-page test PDF back. It checks fonts, the ₹ sign and Indian number formatting.
+
+`WHATSAPP_BOT_MODE` is `personal` by default: the bot runs on someone's own phone, as today. Set it to `dedicated` when the bot has its own number. Then every message the bot's phone sends is treated as the bot's own.
+
 QR pairing on a real phone is a manual check.
 
 ## Tests
 
 ```sh
 cd backend && npm test
+```
+
+The Postgres tests start a real Postgres 18 in Docker and skip when Docker is not running:
+
+```sh
+cd backend && npm run test:pg
 ```

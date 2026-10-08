@@ -15,7 +15,7 @@ export const seedUsers = [
     id: 'usr_joshy',
     email: 'joshy@tierra.test',
     name: 'Joshy',
-    role: 'admin' as const,
+    role: 'manager' as const,
   },
   {
     id: 'usr_anju',

@@ -4,8 +4,8 @@ import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
 import { Icon } from './icon'
 import { Logo } from './logo'
-import { navItems, titleForPath } from '@/lib/nav'
-import type { Me } from '@/lib/types'
+import { navFor, titleForPath } from '@/lib/nav'
+import { roleLabel, type Me } from '@/lib/types'
 
 function initials(name: string): string {
   return name
@@ -46,7 +46,7 @@ export function Shell({
           <Logo variant="mark" />
         </div>
         <nav className="nav">
-          {navItems.map((item) => {
+          {navFor(user.role).map((item) => {
             const showGroup = item.group && item.group !== groupSeen
             if (item.group) groupSeen = item.group
             const active = item.href === '/' ? path === '/' : path === item.href || path.startsWith(`${item.href}/`)
@@ -81,7 +81,7 @@ export function Shell({
           <div className="who">
             <div className="t">
               <b>{user.name}</b>
-              <span>{user.role === 'admin' ? 'Admin' : 'Office'}</span>
+              <span>{roleLabel(user.role)}</span>
             </div>
             <div className="av">{initials(user.name)}</div>
           </div>

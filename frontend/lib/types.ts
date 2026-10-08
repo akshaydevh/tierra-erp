@@ -1,4 +1,15 @@
-export type Role = 'admin' | 'office'
+export const ROLES = ['admin', 'manager', 'office'] as const
+export type Role = (typeof ROLES)[number]
+
+export const ROLE_LABELS: Record<Role, string> = {
+  admin: 'Admin',
+  manager: 'Manager',
+  office: 'Office',
+}
+
+export function roleLabel(role: Role): string {
+  return ROLE_LABELS[role]
+}
 
 export type Me = {
   id: string
@@ -107,17 +118,30 @@ export const TASK_CATEGORIES = [
 ] as const
 
 export type TaskCategory = (typeof TASK_CATEGORIES)[number]
-export type TaskStatus = 'todo' | 'doing' | 'done'
+export type TaskStatus = 'todo' | 'doing' | 'done' | 'cancelled'
+export type TaskKind = 'todo' | 'procurement' | 'approval' | 'data_entry' | 'customer_followup' | 'review'
+export type TaskVia = 'dashboard' | 'whatsapp' | 'desk' | 'system'
 
 export type Task = {
   id: string
   title: string
   category: TaskCategory
   status: TaskStatus
+  kind: TaskKind
   assigneeId: string | null
   assigneeName: string | null
+  assigneeRole: Role | null
+  description: string | null
+  dueAt: string | null
+  subjectType: string | null
+  subjectId: string | null
+  notifiedAt: string | null
+  waMessageId: string | null
+  createdVia: TaskVia
   createdBy: string
+  createdByName: string | null
   createdAt: string
+  completedAt: string | null
 }
 
 export const TASK_CATEGORY_LABELS: Record<TaskCategory, string> = {
@@ -134,4 +158,5 @@ export const TASK_STATUS_LABELS: Record<TaskStatus, string> = {
   todo: 'To do',
   doing: 'In progress',
   done: 'Done',
+  cancelled: 'Cancelled',
 }

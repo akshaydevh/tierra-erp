@@ -1,8 +1,11 @@
+import type { Role } from './types'
+
 export type NavItem = {
   href: string
   label: string
   icon: string
   group?: string
+  roles?: Role[]
 }
 
 export const navItems: NavItem[] = [
@@ -15,12 +18,21 @@ export const navItems: NavItem[] = [
   { href: '/procurement', label: 'Procurement', icon: 'bag' },
   { href: '/dispatch', label: 'Dispatch', icon: 'truck' },
   { href: '/inventory', label: 'Inventory', icon: 'warehouse' },
-  { href: '/payments', label: 'Payments', icon: 'card', group: 'Finance' },
-  { href: '/costing', label: 'Costing', icon: 'chart' },
-  { href: '/payroll', label: 'Payroll and attendance', icon: 'users' },
+  { href: '/payments', label: 'Payments', icon: 'card', group: 'Finance', roles: ['admin', 'manager'] },
+  { href: '/costing', label: 'Costing', icon: 'chart', roles: ['admin', 'manager'] },
+  { href: '/payroll', label: 'Payroll and attendance', icon: 'users', roles: ['admin'] },
   { href: '/reports', label: 'Reports', icon: 'file' },
   { href: '/masters', label: 'Masters', icon: 'books', group: 'System' },
 ]
+
+export function navFor(role: Role): NavItem[] {
+  return navItems.filter((item) => !item.roles || item.roles.includes(role))
+}
+
+export function canOpen(role: Role, href: string): boolean {
+  const item = navItems.find((entry) => entry.href === href)
+  return !item?.roles || item.roles.includes(role)
+}
 
 const placeholders: Record<string, string> = {
   'my-day': 'My Day',
