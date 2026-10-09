@@ -1,0 +1,226 @@
+# SAP tables loaded into schema `sap` (see README.md).
+#
+# Per table:
+#   columns:  SAP column names to keep, or "*" for every column (narrow tables)
+#   exclude:  with "*", columns to leave out (passwords, encryption blobs)
+#   key:      primary key columns (the load fails on duplicates)
+#   indexes:  extra btree indexes, each a list of columns
+#   types:    per-column override of the generated Postgres type
+#             (SAP TIMESTAMP columns become `date`; the load fails if one carries a time of day,
+#              so those few are declared `timestamp` here)
+#
+# Postgres table and column names are the SAP names lower-cased (`@CCS_EOINV` -> `ccs_eoinv`).
+
+column_sets:
+  # Marketing-document headers (ORDR, OINV, ORIN, OPOR, OPDN, OPCH, ORPC, OIGN, OIGE share one layout)
+  doc_header: &doc_header
+    [DocEntry, DocNum, Series, ObjType, DocType, CANCELED, DocStatus, InvntSttus,
+     DocDate, DocDueDate, TaxDate, ReqDate, CancelDate,
+     CardCode, CardName, Address, Address2, NumAtCard, ShipToCode, PayToCode, CntctCode, SlpCode,
+     VatSum, DiscPrcnt, DiscSum, TotalExpns, RoundDif, DocTotal, PaidToDate,
+     Comments, JrnlMemo, Ref1, Ref2, TransId, FinncPriod,
+     DocTime, CreateDate, CreateTS, UpdateDate, UpdateTS, UserSign, UserSign2,
+     WddStatus, draftKey, AtcEntry, DocManClsd, RevRefNo, RevRefDate, TaxInvNo, Weight,
+     U_Type, U_Stype, U_CardCode, U_CardName, U_SPrice]
+  # Marketing-document lines (RDR1, INV1, RIN1, POR1, PDN1, PCH1, RPC1, IGN1, IGE1)
+  doc_lines: &doc_lines
+    [DocEntry, LineNum, VisOrder, ObjType, BaseType, BaseEntry, BaseLine, BaseRef, BaseDocNum, BaseAtCard,
+     TargetType, TrgetEntry, LineStatus, ItemCode, Dscription,
+     Quantity, OpenQty, InvQty, OpenInvQty, PackQty, DelivrdQty, unitMsr, NumPerMsr,
+     Price, PriceBefDi, DiscPrcnt, LineTotal, OpenSum, VatPrcnt, VatGroup, TaxCode, VatSum, GTotal,
+     StockPrice, StockSum, GrssProfit, WhsCode, AcctCode,
+     DocDate, ShipDate, ActDelDate, ShipToCode, SlpCode, BaseCard, HsnEntry, LinManClsd, TreeType,
+     U_TotNoBan, U_BStemCnt, U_StemWgt]
+  doc_header_indexes: &doc_header_indexes
+    [[CardCode], [DocDate], [NumAtCard], [Series]]
+  doc_lines_indexes: &doc_lines_indexes
+    [[ItemCode], [BaseEntry, BaseType], [TrgetEntry, TargetType]]
+  # Incoming / outgoing payments and payment drafts (ORCT, OVPM, OPDF)
+  payment_header: &payment_header
+    [DocEntry, DocNum, Series, ObjType, DocType, Canceled, DocDate, DocDueDate, TaxDate,
+     CardCode, CardName, Address, PayToCode, CntctCode, BpAct,
+     CashAcct, CashSum, TrsfrAcct, TrsfrSum, TrsfrDate, TrsfrRef, CheckSum, PayNoDoc, NoDocSum, DocTotal, OpenBal,
+     Comments, JrnlMemo, Ref1, TransId, CancelDate, WddStatus, DraftKey,
+     DocTime, CreateDate, CreateTS, UpdateDate, UserSign, AtcEntry]
+
+tables:
+  # ---------------------------------------------------------------- masters
+  OITM:
+    columns: [ItemCode, ItemName, FrgnName, ItmsGrpCod, ItemType, PrchseItem, SellItem, InvntItem,
+              OnHand, IsCommited, OnOrder, AvgPrice, LstEvlPric, LastPurPrc, LastPurDat, PrdStdCst,
+              CardCode, InvntryUom, BuyUnitMsr, SalUnitMsr, NumInBuy, NumInSale, SWeight1, CodeBars,
+              EvalSystem, TreeType, ManBtchNum, IssueMthd, DfltWH, ChapterID, GstTaxCtg,
+              validFor, frozenFor, CreateDate, CreateTS, UpdateDate, UserSign,
+              U_NPU, U_ItmCtg, U_TaxRate]
+    key: [ItemCode]
+    indexes: [[ItmsGrpCod]]
+  OITB:
+    columns: [ItmsGrpCod, ItmsGrpNam, InvntSys, createDate, updateDate, U_Type]
+    key: [ItmsGrpCod]
+  OCHP:                # HSN / SAC codes (OITM.ChapterID -> Chapter), printed on sales orders
+    columns: [AbsEntry, Chapter, Heading, SubHeading]
+    key: [AbsEntry]
+  OWHS:
+    columns: [WhsCode, WhsName, Inactive, Locked, createDate, updateDate]
+    key: [WhsCode]
+  OITW:
+    columns: [ItemCode, WhsCode, OnHand, IsCommited, OnOrder, Consig, AvgPrice, StockValue,
+              MinStock, MaxStock, Locked, createDate, updateDate]
+    key: [ItemCode, WhsCode]
+    indexes: [[WhsCode]]
+  OCRD:
+    columns: [CardCode, CardName, CardFName, CardType, GroupCode, CmpPrivate, LicTradNum, FatherCard,
+              Address, ZipCode, MailAddres, City, County, State1, Country, Phone1, Phone2, Cellular, E_Mail,
+              CntctPrsn, SlpCode, ShipToDef, BillToDef, DebPayAcct,
+              Balance, DNotesBal, OrdersBal, validFor, frozenFor, CreateDate, CreateTS, UpdateDate,
+              AtcEntry, U_Export]
+    key: [CardCode]
+  OCRG:
+    columns: "*"
+    key: [GroupCode]
+  CRD1:
+    columns: "*"
+    exclude: [EncryptIV]
+    key: [CardCode, Address, AdresType]
+  OCPR:
+    columns: "*"
+    exclude: [Password, EncryptIV]
+    key: [CntctCode]
+    indexes: [[CardCode]]
+  OSLP:
+    columns: "*"
+    exclude: [EncryptIV]
+    key: [SlpCode]
+  NNM1:
+    columns: "*"
+    key: [Series]
+  OUSR:
+    columns: [USERID, USER_CODE, U_NAME, E_Mail, Department, SUPERUSER, Locked, Branch]
+    key: [USERID]
+
+  # ---------------------------------------------------------------- bills of materials
+  OITT:
+    columns: "*"
+    key: [Code]
+  ITT1:
+    columns: "*"
+    key: [Father, ChildNum]
+    indexes: [[Code]]
+
+  # ---------------------------------------------------------------- sales
+  ORDR: {columns: *doc_header, key: [DocEntry], indexes: *doc_header_indexes}
+  RDR1: {columns: *doc_lines, key: [DocEntry, LineNum], indexes: *doc_lines_indexes}
+  OINV: {columns: *doc_header, key: [DocEntry], indexes: *doc_header_indexes}
+  INV1: {columns: *doc_lines, key: [DocEntry, LineNum], indexes: *doc_lines_indexes}
+  ORIN: {columns: *doc_header, key: [DocEntry], indexes: *doc_header_indexes}
+  RIN1: {columns: *doc_lines, key: [DocEntry, LineNum], indexes: *doc_lines_indexes}
+  "@CCS_EOINV":
+    columns: "*"
+    key: [DocEntry]
+    indexes: [[U_BaseEntry, U_BaseType]]
+  "@CCS_EOEWB":
+    columns: "*"
+    key: [DocEntry]
+    indexes: [[U_BaseEntry, U_BaseType]]
+
+  # ---------------------------------------------------------------- purchasing
+  OPOR: {columns: *doc_header, key: [DocEntry], indexes: *doc_header_indexes}
+  POR1: {columns: *doc_lines, key: [DocEntry, LineNum], indexes: *doc_lines_indexes}
+  OPDN: {columns: *doc_header, key: [DocEntry], indexes: *doc_header_indexes}
+  PDN1: {columns: *doc_lines, key: [DocEntry, LineNum], indexes: *doc_lines_indexes}
+  OPCH: {columns: *doc_header, key: [DocEntry], indexes: *doc_header_indexes}
+  PCH1: {columns: *doc_lines, key: [DocEntry, LineNum], indexes: *doc_lines_indexes}
+  ORPC: {columns: *doc_header, key: [DocEntry], indexes: *doc_header_indexes}
+  RPC1: {columns: *doc_lines, key: [DocEntry, LineNum], indexes: *doc_lines_indexes}
+
+  # ---------------------------------------------------------------- production
+  OWOR:
+    columns: "*"
+    key: [DocEntry]
+    indexes: [[ItemCode], [CardCode], [PostDate]]
+  WOR1:
+    columns: "*"
+    key: [DocEntry, LineNum]
+    indexes: [[ItemCode]]
+  OIGN: {columns: *doc_header, key: [DocEntry], indexes: [[DocDate]]}
+  IGN1: {columns: *doc_lines, key: [DocEntry, LineNum], indexes: *doc_lines_indexes}
+  OIGE: {columns: *doc_header, key: [DocEntry], indexes: [[DocDate]]}
+  IGE1: {columns: *doc_lines, key: [DocEntry, LineNum], indexes: *doc_lines_indexes}
+
+  # ---------------------------------------------------------------- stock, batches, valuation
+  OIVL:
+    columns: [TransSeq, TransType, CreatedBy, BASE_REF, DocLineNum, SubLineNum, DocDate, CreateDate, CreateTime,
+              ItemCode, LocCode, InQty, OutQty, Price, PriceDiff, SumStock, OpenQty, OpenStock,
+              CostMethod, CogsVal, UserSign, MessageID]
+    key: [TransSeq]
+    indexes: [[ItemCode, LocCode], [TransType, CreatedBy], [DocDate]]
+  IVL1:
+    columns: "*"
+    key: [TransSeq, LayerID]
+  OBTN:
+    columns: "*"
+    key: [AbsEntry]
+    indexes: [[ItemCode, SysNumber]]
+  OBTQ:
+    columns: "*"
+    key: [AbsEntry]
+    indexes: [[ItemCode, WhsCode], [MdAbsEntry]]
+  OITL:
+    columns: "*"
+    key: [LogEntry]
+    indexes: [[DocType, DocEntry, DocLine], [ItemCode]]
+  ITL1:
+    columns: "*"
+    key: [LogEntry, ItemCode, SysNumber]
+    indexes: [[MdAbsEntry]]
+
+  # ---------------------------------------------------------------- finance
+  OJDT:
+    columns: [TransId, TransType, BaseRef, CreatedBy, RefDate, DueDate, TaxDate, Memo, Ref1, Ref2,
+              LocTotal, Number, Series, FinncPriod, StornoToTr, AutoStorno, CreateDate, CreateTime, UserSign, AtcEntry]
+    key: [TransId]
+    indexes: [[RefDate], [TransType, CreatedBy]]
+  JDT1:
+    columns: [TransId, Line_ID, Account, ShortName, ContraAct, Debit, Credit, BalDueDeb, BalDueCred,
+              RefDate, DueDate, TaxDate, TransType, CreatedBy, BaseRef, Ref1, Ref2, LineMemo,
+              SourceID, SourceLine, MthDate, DebCred]
+    key: [TransId, Line_ID]
+    indexes: [[ShortName], [Account, RefDate]]
+  OACT:
+    columns: [AcctCode, AcctName, FormatCode, Segment_0, FatherNum, Levels, Postable, GroupMask, ActType,
+              Finanse, LocManTran, CurrTotal, ValidFor, FrozenFor, CreateDate, UpdateDate]
+    key: [AcctCode]
+  OFPR:
+    columns: "*"
+    key: [AbsEntry]
+  ORCT: {columns: *payment_header, key: [DocEntry], indexes: [[CardCode], [DocDate]]}
+  RCT2: {columns: "*", key: [DocNum, InvoiceId]}
+  RCT4: {columns: "*", key: [DocNum, LineId]}
+  OVPM: {columns: *payment_header, key: [DocEntry], indexes: [[CardCode], [DocDate]]}
+  VPM2: {columns: "*", key: [DocNum, InvoiceId]}
+  VPM4: {columns: "*", key: [DocNum, LineId]}
+  OPDF: {columns: *payment_header, key: [DocEntry], indexes: [[DocDate]]}
+  PDF4: {columns: "*", key: [DocNum, LineId]}
+  DSC1:
+    columns: [AbsEntry, BankCode, Account, Branch, BranchName, GLAccount, AcctName, Currency, UpdateDate]
+    key: [AbsEntry]
+
+  # ---------------------------------------------------------------- approvals
+  OWDD:
+    columns: "*"
+    key: [WddCode]
+    indexes: [[ObjType, DocEntry], [ObjType, DraftEntry]]
+  WDD1:
+    columns: "*"
+    key: [WddCode, StepCode, UserID]
+  OWTM:
+    columns: "*"
+    key: [WtmCode]
+
+  # ---------------------------------------------------------------- attachments
+  OATC:
+    columns: "*"
+    key: [AbsEntry]
+  ATC1:
+    columns: "*"
+    key: [AbsEntry, Line]

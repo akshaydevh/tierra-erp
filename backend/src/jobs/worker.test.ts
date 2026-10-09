@@ -34,28 +34,38 @@ function fakeEvolution(sent: Array<{ number: string; text: string }>, gate: Gate
   }
 }
 
+/** No SAP import in these tests: every read fails the way it does before the first import. */
+const notImported = Object.assign(
+  () => {
+    throw Object.assign(new Error('relation "erp.import_info" does not exist'), { code: '42P01' })
+  },
+  { unsafe: () => undefined },
+) as unknown as AgentDeps['sapSql']
+
 function setup() {
   const store = new MemoryStore('hash')
   const sent: Array<{ number: string; text: string }> = []
   const gate: Gate = { failures: 0, hold: new Map() }
-  let judged = 0
+  let modelCalls = 0
   const deps: AgentDeps = {
     store,
     evolution: fakeEvolution(sent, gate),
-    extractPurchaseOrder: async () => {
+    readPurchaseOrder: async () => {
       throw new Error('not used')
     },
-    judgeIntent: async () => {
-      judged += 1
-      return { intent: 'conversation', confidence: 1 }
+    dataBrief: async () => {
+      throw new Error('not used')
     },
-    extractTask: async () => ({ title: null, category: null, assigneeRole: null, assigneeUnknown: false }),
-    completeChat: async () => 'Hello from the worker.',
+    sapSql: notImported,
+    chatModel: async () => {
+      modelCalls += 1
+      return { content: 'Hello from the worker.', toolCalls: [] }
+    },
     enqueue: async () => true,
     botMode: 'personal',
     now: () => now,
   }
-  return { deps, store, sent, gate, judged: () => judged }
+  return { deps, store, sent, gate, modelCalls: () => modelCalls }
 }
 
 function message(id: string, text: string): IncomingMessage {
@@ -94,6 +104,17 @@ async function queued(store: MemoryStore, kind: string, payload: Record<string, 
 }
 
 describe('job worker', () => {
+  it("never runs two turns of one chat at once: the later one waits for the earlier to finish", async () => {
+    const { store } = setup()
+    const a1 = await store.enqueueJob({ ...incomingJob(message('a1', 'first'), 'personal'), runAfter: now })
+    const a2 = await store.enqueueJob({ ...incomingJob(message('a2', 'second'), 'personal'), runAfter: now })
+    const b1 = await store.enqueueJob({ ...incomingJob({ ...message('b1', 'other chat'), remoteJid: '919800000000@s.whatsapp.net' }, 'personal'), runAfter: now })
+    expect((await store.claimJobs(5, 30_000, now)).map((job) => job.id)).toEqual([a1!.id, b1!.id])
+    expect(await store.claimJobs(5, 30_000, now)).toEqual([])
+    await store.completeJob(a1!.id)
+    expect((await store.claimJobs(5, 30_000, now)).map((job) => job.id)).toEqual([a2!.id])
+  })
+
   it('sends a task notice for a task.notify job', async () => {
     const { deps, store, sent } = setup()
     await store.saveRelation({ userId: 'usr_joshy', phoneNumber: '919700000001' })
@@ -113,7 +134,7 @@ describe('job worker', () => {
   })
 
   it('handles a wa.incoming job as a WhatsApp turn', async () => {
-    const { deps, sent, judged } = setup()
+    const { deps, sent, modelCalls } = setup()
     const message = {
       id: 'in-1',
       remoteJid: '919812345678@s.whatsapp.net',
@@ -134,7 +155,7 @@ describe('job worker', () => {
       embeddedBase64: null,
     }
     await runJob(deps, await queued(deps.store as MemoryStore, 'wa.incoming', { message, audience: 'personal' }))
-    expect(judged()).toBe(1)
+    expect(modelCalls()).toBe(1)
     expect(sent.map((row) => row.text)).toEqual(['> 🧞‍♂️ Tierra Bot:\n\nHello from the worker.'])
   })
 
@@ -200,12 +221,12 @@ describe('job worker', () => {
     expect(await store.getJob(job.id)).toMatchObject({ status: 'failed', lastError: 'Lease expired' })
 
     const broken = (await store.enqueueJob({ ...incomingJob(message('in-broken', 'hi'), 'personal'), runAfter: now }))!
-    deps.completeChat = async () => {
-      throw new Error('model down')
+    deps.evolution.sendText = async () => {
+      throw new Error('gateway down')
     }
     const [claimed] = await store.claimJobs(1, 60_000, now)
     await settleJob(deps, claimed!)
-    expect(await store.getJob(broken.id)).toMatchObject({ status: 'failed', lastError: 'model down' })
+    expect(await store.getJob(broken.id)).toMatchObject({ status: 'failed', lastError: 'gateway down' })
   })
 
   it('keeps a free slot working while another job is slow', async () => {

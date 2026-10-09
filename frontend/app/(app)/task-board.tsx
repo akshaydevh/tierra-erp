@@ -249,6 +249,16 @@ export function TaskBoard() {
               >
                 <b>{task.title}</b>
                 {task.description ? <p className="taskdetail">{task.description}</p> : null}
+                {task.subjectType === 'document' && task.subjectId ? (
+                  <a
+                    className="tasklink"
+                    href={`/api/documents/${encodeURIComponent(task.subjectId)}`}
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    Open PDF
+                  </a>
+                ) : null}
                 <div className="taskchips">
                   <span className="pill grey">{TASK_CATEGORY_LABELS[task.category]}</span>
                   {task.assigneeRole ? <span className="pill ink">{roleLabel(task.assigneeRole)}</span> : null}

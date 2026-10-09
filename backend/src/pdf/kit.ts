@@ -6,7 +6,23 @@ export const COMPANY = {
   name: 'Tierra Food India Private Limited',
   address: ['KINFRA Food Processing Park, Elamannoor P O', 'Adoor, Kerala 691524'],
   gstin: '32AADCT3129P2Z5',
+  pan: 'AADCT3129P',
+  stateCode: '32',
   email: 'contact@tierra.in',
+  website: 'www.tierra.in',
+  fssai: '10019041002004',
+  cin: 'U15499KL2009PTC024969',
+}
+
+/**
+ * The bank block printed on sales orders, one line per entry ("State Bank of India, <branch>", "A/C <no> · IFSC <code>").
+ * From COMPANY_BANK (lines separated by "|"), so account numbers stay out of the repo. Empty: no bank block.
+ */
+export function bankLines(env: NodeJS.ProcessEnv = process.env): string[] {
+  return (env.COMPANY_BANK ?? '')
+    .split('|')
+    .map((line) => line.trim())
+    .filter(Boolean)
 }
 
 function fontDictionary(): TFontDictionary {

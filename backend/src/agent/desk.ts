@@ -1,17 +1,15 @@
 import { randomUUID } from 'node:crypto'
 import type { PublicUser } from '../db/types'
 import type { ThreadMessage } from '../db/store'
+import { incomingJob } from '../jobs/worker'
 import type { IncomingMessage } from '../whatsapp/parse'
-import type { Person } from '../whatsapp/people'
-import {
-  deskThreadJid,
-  handleIncoming,
-  isTierraReply,
-  tierraReplyText,
-  type AgentDeps,
-} from './handle-message'
+import type { AgentDeps } from './deps'
+import { deskThreadJid } from './outbox'
+import { isTierraReply, tierraReplyText } from './send'
 
 export const PDF_BYTE_LIMIT = 8 * 1024 * 1024
+/** How long the desk shows "working" for a turn without a reply; the loop's budget is 40 s. */
+export const DESK_PENDING_MS = 60_000
 
 export type AgentMessage = {
   id: string
@@ -27,8 +25,8 @@ export type DeskPdf = {
 }
 
 export type DeskPostResult =
-  | { ok: true; message: AgentMessage; reply: AgentMessage | null }
-  | { ok: false; status: 400 | 409; error: string }
+  | { ok: true; message: AgentMessage }
+  | { ok: false; status: 400 | 409 | 503; error: string }
 
 function toAgentMessage(row: ThreadMessage): AgentMessage {
   const raw = row.body ?? ''
@@ -42,11 +40,28 @@ function toAgentMessage(row: ThreadMessage): AgentMessage {
   }
 }
 
-export async function listDeskMessages(deps: AgentDeps, userId: string): Promise<AgentMessage[]> {
+/**
+ * The desk thread, and whether the person's last message still waits for its reply: its turn has not finished (the
+ * worker stamps it answered when the reply is in, or when the turn failed) and it was sent less than a minute ago.
+ * Other posts landing in the thread meanwhile (a PO summary, an approval request) do not end the wait.
+ */
+export async function listDeskMessages(
+  deps: AgentDeps,
+  userId: string,
+): Promise<{ messages: AgentMessage[]; pending: boolean }> {
   const rows = await deps.store.listThread(deskThreadJid(userId))
-  return rows.map(toAgentMessage)
+  const messages = rows.map(toAgentMessage)
+  const lastTurn = [...rows].reverse().find((row) => !isTierraReply(row.body ?? ''))
+  const pending = Boolean(
+    lastTurn && !lastTurn.answeredAt && deps.now().getTime() - Date.parse(lastTurn.createdAt) < DESK_PENDING_MS,
+  )
+  return { messages, pending }
 }
 
+/**
+ * Stores the desk message (and its PDF) and queues the turn like a WhatsApp message; the reply lands in the thread
+ * when the worker has answered, and the desk polls for it.
+ */
 export async function postDeskTurn(
   deps: AgentDeps,
   user: PublicUser,
@@ -70,17 +85,13 @@ export async function postDeskTurn(
     fromMe: true,
     hasPdf: Boolean(pdf),
     body: text || null,
+    kind: pdf ? 'document' : 'text',
   })
   if (!claimed) return { ok: false, status: 409, error: 'That message was already sent' }
+  const documentId = pdf
+    ? await deps.store.insertDocument({ filename: pdf.filename, mimeType: 'application/pdf', content: pdf.content, messageId: id })
+    : null
 
-  const accounts = await deps.store.listAccountLinks()
-  const link = accounts.find((account) => account.id === user.id)
-  const speaker: Person = {
-    userId: user.id,
-    name: user.name,
-    role: user.role,
-    phoneNumber: link?.phoneNumber ?? '',
-  }
   const message: IncomingMessage = {
     id,
     remoteJid,
@@ -98,23 +109,17 @@ export async function postDeskTurn(
     reaction: null,
     pdf: pdf ? { fileName: pdf.filename, mimeType: 'application/pdf' } : null,
     raw: null,
-    embeddedBase64: pdf ? pdf.content.toString('base64') : null,
+    embeddedBase64: null,
   }
-  const replyBody = await handleIncoming(deps, message, 'self', { speaker })
-  const thread = await deps.store.listThread(remoteJid)
-  const stored = thread.find((row) => row.id === id)
-  const replyRow = replyBody ? [...thread].reverse().find((row) => row.body === replyBody) : undefined
+  const job = incomingJob(message, 'self')
+  const queued = await deps.enqueue({ ...job, payload: { ...job.payload, desk: { userId: user.id, documentId } } })
+  if (!queued) return { ok: false, status: 503, error: 'Tierra Agent could not take that message. Try again.' }
+
+  const stored = (await deps.store.listThread(remoteJid)).find((row) => row.id === id)
   return {
     ok: true,
     message: stored
       ? toAgentMessage(stored)
-      : {
-          id,
-          role: 'user',
-          text,
-          filename: pdf?.filename ?? null,
-          createdAt: new Date().toISOString(),
-        },
-    reply: replyRow ? toAgentMessage(replyRow) : null,
+      : { id, role: 'user', text, filename: pdf?.filename ?? null, createdAt: new Date().toISOString() },
   }
 }

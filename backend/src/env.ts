@@ -1,8 +1,10 @@
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { asReasoningEffort, type ReasoningEffort } from './agent/model-params'
 import { DEV_PASSWORD } from './db/seed-data'
 import type { BotMode } from './whatsapp/parse'
 import { DEFAULT_COUNTRY_CODE } from './whatsapp/people'
+import { DEFAULT_FILE_STORE } from './files/store'
 
 function loadDotEnv(): void {
   const path = join(process.cwd(), '.env')
@@ -27,7 +29,15 @@ export type Env = {
   webhookSecret: string
   openaiBaseUrl: string
   openaiApiKey: string
+  /** Extraction (the PO reader). */
   openaiModel: string
+  /** The agent's tool loop; OPENAI_AGENT_MODEL, else OPENAI_MODEL. */
+  openaiAgentModel: string
+  /** Reasoning effort for the PO reader when OPENAI_MODEL is a reasoning model. Default low. */
+  openaiReasoningEffort: ReasoningEffort
+  /** Reasoning effort for agent turns without tools (tool turns on GPT-5.4+ always send none). Default low. */
+  openaiAgentReasoningEffort: ReasoningEffort
+  /** TypeSafe classifies unclear admin replies to a pending sales order. Empty: the OpenAI model does it. */
   typesafeApiKey: string
   production: boolean
   /** SEED_DEMO=1 loads the demo users, customers and stock into an empty database. */
@@ -38,6 +48,10 @@ export type Env = {
   botMode: BotMode
   /** Added to a 10-digit mobile number typed without a country code. */
   defaultCountryCode: string
+  /** FILE_STORE: fs:<dir> (default fs:./data/files) or s3. */
+  fileStore: string
+  /** The bucket for FILE_STORE=s3 (any S3-compatible service; path-style). */
+  s3: { endpoint: string; bucket: string; region: string; accessKeyId: string; secretAccessKey: string; urlStyle: string }
 }
 
 const DEV_EVOLUTION_API_KEY = 'tierra-evolution-key'
@@ -79,7 +93,10 @@ export function loadEnv(): Env {
     webhookSecret: secretFrom('EVOLUTION_WEBHOOK_SECRET', DEV_WEBHOOK_SECRET, production),
     openaiBaseUrl: process.env.OPENAI_BASE_URL ?? 'https://api.openai.com/v1',
     openaiApiKey: process.env.OPENAI_API_KEY ?? '',
-    openaiModel: process.env.OPENAI_MODEL ?? 'gpt-4o-mini',
+    openaiModel: process.env.OPENAI_MODEL || 'gpt-4o-mini',
+    openaiAgentModel: process.env.OPENAI_AGENT_MODEL || process.env.OPENAI_MODEL || 'gpt-4o-mini',
+    openaiReasoningEffort: asReasoningEffort(process.env.OPENAI_REASONING_EFFORT, 'low'),
+    openaiAgentReasoningEffort: asReasoningEffort(process.env.OPENAI_AGENT_REASONING_EFFORT, 'low'),
     typesafeApiKey: process.env.TYPESAFE_API_KEY ?? '',
     production,
     seedDemo: process.env.SEED_DEMO === '1',
@@ -87,5 +104,14 @@ export function loadEnv(): Env {
     workerEnabled: process.env.WORKER_ENABLED !== '0',
     botMode: botModeFrom(process.env.WHATSAPP_BOT_MODE),
     defaultCountryCode: countryCodeFrom(process.env.DEFAULT_COUNTRY_CODE),
+    fileStore: process.env.FILE_STORE || DEFAULT_FILE_STORE,
+    s3: {
+      endpoint: process.env.S3_ENDPOINT ?? '',
+      bucket: process.env.S3_BUCKET ?? '',
+      region: process.env.S3_REGION ?? '',
+      urlStyle: process.env.S3_URL_STYLE ?? '',
+      accessKeyId: process.env.S3_ACCESS_KEY_ID ?? '',
+      secretAccessKey: process.env.S3_SECRET_ACCESS_KEY ?? '',
+    },
   }
 }

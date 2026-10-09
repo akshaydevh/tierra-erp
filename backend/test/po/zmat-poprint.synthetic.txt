@@ -1,0 +1,116 @@
+
+
+   Northwind Retail Limited
+   2nd Floor, Test Tower
+   MG Road
+   Kochi- 682001   Kerala, INDIA
+SELLERPURCHASE ORDER
+   Vendor Code : 99887766
+   TIERRA FOOD INDIA PVT LTD
+   
+   KINFRA FOOD PROCESSING PARK
+   ADOOR
+   Pin Code : 691524,   India
+   GSTN No: 32AADCT3129P2Z5
+   Attention : 
+   
+   PO NO.:    4400012345  Site : T9QA
+   PO Date : 02.03.2026
+   
+NWR Test DC Kochi
+   In accepting this PURCHASE ORDER, SELLER agrees to furnish the GOODS specified.
+   Delivery Address : Distribution Center
+   "Plot 7, Test Industrial Estate
+   Kalamassery
+   
+   ERNAKULAM, Kerala - 683104
+   Tel : 
+   GSTN No : 32AAACN9999Q1ZB
+   EMAIL : dc.test@northwind.example
+   TOTAL BASIC VALUE   INR12,744.00
+   TOTAL CGST   INR318.60
+   TOTAL SGST   INR318.60
+   Total Order Value :INR13,381.20
+   DELIVERY DATE :   10.03.2026
+    Payment Terms :  See Page Inside
+   Buyer  : NWBUY01
+   Email : buyer@northwind.example
+
+PURCHASE ORDER   Number   : 4400012345
+   Po Date    : 02.03.2026
+   Page No  : 1
+Sr.No Article No.
+ HSN Code
+ EAN No.
+ Vendor Article No.
+ Vendor Item No
+ Material Description
+ Delivery Date
+ Site
+QuantityUOMMRPBase CostCGST(%)
+SGST(%)
+CESS(%)
+CessFxdRt
+CGST
+SGST
+CESS
+CessFxdVl
+Total Base Value
+ 1 700100200
+ 20081940
+ 
+ 8900000000017
+ 
+ 
+ ZETA BANANA CHIPS 100 G PP
+ 10.03.2026
+ T9QA
+           3.000 
+         150.000 
+CRT
+EA
+       3,000.00 
+          20.00 
+1,248.00           2.50 
+           2.50 
+           0.00 
+           0.00 
+93.60
+93.60
+0.00
+0.00
+3,744.00
+ 2 700100300
+ 20081940
+ 
+ 8900000000024
+ 
+ 
+ ZETA PRM KERELA CASSAVA CHIPS 200G PP
+ 10.03.2026
+ T9QA
+          10.000 
+C01
+       1,500.00 
+900.00           2.50 
+           2.50 
+           0.00 
+           0.00 
+225.00
+225.00
+0.00
+0.00
+9,000.00
+Grand Total of Qty          13.000 
+ TOTAL BASIC VALUEINR12,744.00
+ TOTAL CGSTINR318.60
+ TOTAL SGSTINR318.60
+ Total Order Value:INR13,381.20
+Terms of payment :
+Payment within 30 days.
+Note(S) :
+» Mention the PO number on the invoice and
+the delivery challan.
+» Book a DC slot 24 hrs ahead.
+GSTIN Number Details:
+GSTIN No : 32AAACN9999Q1ZB

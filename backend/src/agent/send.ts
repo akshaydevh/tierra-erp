@@ -56,3 +56,48 @@ export async function sendDm(
   }
   return sent.messageId
 }
+
+export type OutgoingDocument = {
+  content: Buffer
+  fileName: string
+  caption: string
+}
+
+/**
+ * Sends a PDF to a WhatsApp chat (a phone or a group jid) and registers it. The caption carries the bot prefix.
+ * Returns the WhatsApp message id.
+ */
+export async function sendDocument(
+  deps: { store: Store; evolution: EvolutionClient },
+  to: { number: string; remoteJid: string },
+  document: OutgoingDocument,
+  registry: Registry,
+): Promise<string | null> {
+  const caption = ensureTierraPrefix(document.caption)
+  const sent = await deps.evolution.sendMedia({
+    number: to.number,
+    mediatype: 'document',
+    mimetype: 'application/pdf',
+    fileName: document.fileName,
+    caption,
+    media: document.content.toString('base64'),
+  })
+  if (sent.messageId) {
+    await deps.store.claimMessage({
+      evolutionMessageId: sent.messageId,
+      remoteJid: to.remoteJid,
+      fromMe: true,
+      hasPdf: true,
+      body: caption,
+      kind: 'document',
+      status: 'sent',
+      ...registry,
+    })
+  }
+  return sent.messageId
+}
+
+/** A phone's DM address for sendDocument. */
+export function dmAddress(phone: string): { number: string; remoteJid: string } {
+  return { number: phoneDigits(phone), remoteJid: phoneJid(phone) }
+}

@@ -6,6 +6,7 @@ import { isBotEcho } from './brand'
 import { enrichIdentity, learnIdentities } from './identity'
 import {
   audienceFor,
+  isGroupJid,
   isPersonalJid,
   parseWebhook,
   withoutMedia,
@@ -18,6 +19,15 @@ async function audienceOptions(deps: AgentDeps, message: IncomingMessage): Promi
   const targetId = message.reaction?.targetId ?? message.quotedId
   const target = targetId ? await deps.store.findMessage(targetId) : null
   return { targetsBot: Boolean(target?.fromMe && target.purpose), botMode: deps.botMode }
+}
+
+/**
+ * A PDF posted in a WhatsApp group mapped to a customer goes to PO intake without a mention (plan §P3): the
+ * customer drops its PO in the group. Questions there still need a mention. The bot's own messages never count.
+ */
+async function isMappedGroupPdf(deps: AgentDeps, message: IncomingMessage): Promise<boolean> {
+  if (!message.pdf || message.fromMe || message.control || message.reaction || !isGroupJid(message.remoteJid)) return false
+  return Boolean((await deps.store.getWaGroup(message.remoteJid))?.partyGroupId)
 }
 
 function senderJid(message: IncomingMessage): string | null {
@@ -88,6 +98,7 @@ export async function acceptWebhook(
       audience = audienceFor(message, connection.phoneNumber, options)
     }
   }
+  if (audience === 'ignore' && (await isMappedGroupPdf(deps, message))) audience = 'group'
   if (audience === 'ignore') return { status: 200, body: { ignored: true } }
   if (await deps.store.findMessage(message.id)) return { status: 200, body: { duplicate: true } }
   const queued = await deps.enqueue(incomingJob(withoutMedia(message), audience))

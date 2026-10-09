@@ -13,7 +13,7 @@ export default async function PlaceholderPage({ params }: { params: Promise<{ mo
     <section className="sec">
       <div className="card empty">
         <h3>{title}</h3>
-        <p>This module is not in the first slice. Command Centre, Orders, Inventory, and Settings are live.</p>
+        <p>This module is not built yet. Command Centre, My Day, Approvals, Orders, Production, Procurement, Dispatch, Inventory, Payments, Costing, Payroll and attendance, Reports and Settings are live.</p>
       </div>
     </section>
   )

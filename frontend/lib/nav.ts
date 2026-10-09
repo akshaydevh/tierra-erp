@@ -35,13 +35,6 @@ export function canOpen(role: Role, href: string): boolean {
 }
 
 const placeholders: Record<string, string> = {
-  'my-day': 'My Day',
-  approvals: 'Approvals',
-  dispatch: 'Dispatch',
-  payments: 'Payments',
-  costing: 'Costing',
-  payroll: 'Payroll and attendance',
-  reports: 'Reports',
   masters: 'Masters',
 }
 
@@ -50,7 +43,10 @@ export function placeholderTitle(module: string): string | null {
 }
 
 export function titleForPath(path: string): string {
-  if (path.startsWith('/orders/')) return 'Order'
+  if (path.startsWith('/orders/so/')) return 'Sales order'
+  if (path.startsWith('/orders/tso/')) return 'Tierra sales order'
+  if (path.startsWith('/orders/po/')) return 'Customer PO'
+  if (path.startsWith('/production/')) return 'Work order'
   if (path === '/settings') return 'Settings'
   const item = navItems.find((entry) => entry.href === path)
   return item?.label ?? 'Tierra'

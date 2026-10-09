@@ -1,6 +1,10 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { verifyPassword } from '../auth/password'
 import { connect, runMigrations, startPostgres, type Connection } from '../test/postgres'
+import { partyGroupContract } from '../test/party-group-contract'
+import { orderStoreContract } from '../test/order-store-contract'
+import { poStoreContract } from '../test/po-store-contract'
+import { reportStoreContract } from '../test/report-store-contract'
 import { seedIfEmpty } from './seed'
 
 const harness = await startPostgres()
@@ -201,6 +205,26 @@ describe.skipIf(!pg)('DrizzleStore on Postgres 18', () => {
     }
   })
 
+  it("runs one chat's turns one at a time and in order, even with two claimers", async () => {
+    await conn.sql`delete from jobs`
+    const turn = (id: string, remoteJid: string) => ({ kind: 'wa.incoming', payload: { message: { id, remoteJid }, audience: 'personal' }, runAfter: later(-10_000), maxAttempts: 1 })
+    const a1 = await conn.store.enqueueJob(turn('a1', 'chat-a'))
+    const a2 = await conn.store.enqueueJob(turn('a2', 'chat-a'))
+    const b1 = await conn.store.enqueueJob(turn('b1', 'chat-b'))
+    const notice = await conn.store.enqueueJob({ kind: 'task.notify', payload: { taskId: 't' }, runAfter: later(-10_000) })
+    const other = connect(url)
+    try {
+      const batches = await Promise.all([conn.store.claimJobs(5, 30_000, now), other.store.claimJobs(5, 30_000, now)])
+      // a2 waits for a1 (queued ahead of it, then running); other chats and other kinds are not held up
+      expect(batches.flat().map((job) => job.id).sort()).toEqual([a1!.id, b1!.id, notice!.id].sort())
+      expect(await conn.store.claimJobs(5, 30_000, now)).toEqual([])
+      await conn.store.completeJob(a1!.id)
+      expect((await other.store.claimJobs(5, 30_000, now)).map((job) => job.id)).toEqual([a2!.id])
+    } finally {
+      await other.close()
+    }
+  })
+
   it('claims the oldest ready jobs first', async () => {
     const late = await conn.store.enqueueJob({ kind: 'x', payload: {}, runAfter: later(-1_000) })
     const early = await conn.store.enqueueJob({ kind: 'x', payload: {}, runAfter: later(-5_000) })
@@ -297,49 +321,14 @@ describe.skipIf(!pg)('DrizzleStore on Postgres 18', () => {
   it('keeps one stored PDF per WhatsApp message', async () => {
     const pdf = { filename: 'po.pdf', mimeType: 'application/pdf', content: Buffer.from('%PDF'), messageId: 'wa-pdf-1' }
     expect(await conn.store.hasDocumentForMessage('wa-pdf-1')).toBe(false)
-    await conn.store.insertDocument(pdf)
+    const id = await conn.store.insertDocument(pdf)
     expect(await conn.store.hasDocumentForMessage('wa-pdf-1')).toBe(true)
+    expect(await conn.store.getDocument(id)).toEqual({ filename: 'po.pdf', mimeType: 'application/pdf', content: Buffer.from('%PDF'), kind: 'other' })
+    expect(await conn.store.getDocument('doc_missing')).toBeNull()
     await expect(conn.store.insertDocument(pdf)).rejects.toThrow()
     await conn.sql`
       insert into order_documents (id, filename, mime_type, content)
       values ('doc_a', 'a.pdf', 'x', decode('00', 'hex')), ('doc_b', 'b.pdf', 'x', decode('00', 'hex'))`
-  })
-
-  it('lists the held orders waiting in a chat, newest first', async () => {
-    const hold = async (poNumber: string, remoteJid: string) => {
-      const documentId = await conn.store.insertDocument({
-        filename: `${poNumber}.pdf`,
-        mimeType: 'application/pdf',
-        content: Buffer.from('%PDF'),
-        messageId: `wa-${poNumber}`,
-      })
-      return conn.store.holdShortOrder({
-        customerId: 'cus_beyond',
-        poNumber,
-        poDate: null,
-        remoteJid,
-        documentId,
-        lines: [{ itemId: 'item_ban80', description: 'Banana chips 80g', quantity: 200, unit: 'pouch', unitPrice: null }],
-        shortages: [{ itemId: 'item_ban80', quantity: 160, unit: 'pouch' }],
-        assigneeId: 'usr_joshy',
-      })
-    }
-    const first = await hold('PO-A', '919900000000@s.whatsapp.net')
-    const second = await hold('PO-B', '919900000000@s.whatsapp.net')
-    await hold('PO-C', '919812345678@s.whatsapp.net')
-    const awaiting = await conn.store.listAwaitingConfirmations('919900000000@s.whatsapp.net')
-    expect(awaiting.map((row) => [row.id, row.poNumber])).toEqual([
-      [second.id, 'PO-B'],
-      [first.id, 'PO-A'],
-    ])
-    expect(awaiting[0]?.lines).toEqual([
-      { itemId: 'item_ban80', description: 'Banana chips 80g', quantity: 200, unit: 'pouch', unitPrice: null },
-    ])
-    await conn.store.declinePendingOrder(second.id)
-    expect((await conn.store.listAwaitingConfirmations('919900000000@s.whatsapp.net')).map((row) => row.id)).toEqual([
-      first.id,
-    ])
-    expect(await conn.store.listAwaitingConfirmations('nobody@s.whatsapp.net')).toEqual([])
   })
 
   it('cancels the open tasks about a subject and leaves finished ones', async () => {
@@ -408,5 +397,40 @@ describe.skipIf(!pg)('DrizzleStore on Postgres 18', () => {
     expect(await conn.store.getJob(waiting!.id)).not.toBeNull()
     expect(await conn.store.getJob(done!.id)).toBeNull()
   })
-})
 
+  it('keeps one owner per PAN or card code and unmaps WhatsApp groups of a deleted party', async () => {
+    await partyGroupContract(conn.store, expect as never)
+  })
+
+  it('keeps one live PO per party, number and revision, with its lines and checks', async () => {
+    await poStoreContract(conn.store, expect as never)
+    // a cancelled PO frees its number and revision
+    const [latest] = await conn.store.findCustomerPosByNumber('4400012345')
+    await conn.store.updateCustomerPo(latest!.id, { status: 'cancelled' })
+    expect((await conn.store.findCustomerPosByNumber('4400012345')).map((row) => row.revision)).toEqual([1])
+    const doc = await conn.sql<Array<{ kind: string; subject_type: string }>>`select kind, subject_type from order_documents`
+    expect(doc).toEqual([{ kind: 'customer_po', subject_type: 'customer_po' }])
+  })
+
+  it('numbers TSOs per series and year, reserves stock, decides approvals once and sends to groups at most once', async () => {
+    await orderStoreContract(conn.store, expect as never)
+  })
+
+  it('keeps daily inputs field by field, versions reports per day and stores settings', async () => {
+    await reportStoreContract(conn.store, expect as never)
+    // two reports of one day stored at once still get versions 1 and 2 (a third day avoids the contract's rows)
+    const make = () => conn.store.createDailyReport({ reportDate: '2026-07-20', basis: 'doc_date', dataAsOf: null, payload: {}, documentId: null, generatedBy: null })
+    expect((await Promise.all([make(), make(), make()])).map((row) => row.version).sort()).toEqual([1, 2, 3])
+  })
+
+  it('takes TSO numbers in order when two raise at once', async () => {
+    const order = (n: number) => ({
+      customerPoId: null, partyGroupId: null, cardCode: `ZN0${n}`, checkId: null, status: 'pending_approval' as const, docDate: '2026-04-02',
+      deliveryDate: null, customerPoNo: null, poDate: null, vendorCode: null, siteCode: null, shipToGstin: null, placeOfSupply: null,
+      stateCode: '32', taxKind: 'cgst_sgst' as const, basicTotal: 1, cgst: 0, sgst: 0, igst: 0, taxTotal: 0, total: 1, deliveryTerm: null,
+      paymentTerms: null, notes: [], createdBy: null, lines: [],
+    })
+    const raised = await Promise.all([1, 2, 3, 4, 5].map((n) => conn.store.createSalesOrder(order(n), { series: 'TSO', fy: '26-27' })))
+    expect(raised.map((row) => row.order.docNo).sort()).toEqual(['TSO/26-27/0001', 'TSO/26-27/0002', 'TSO/26-27/0003', 'TSO/26-27/0004', 'TSO/26-27/0005'])
+  })
+})

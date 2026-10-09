@@ -7,7 +7,7 @@ const now = new Date('2026-09-26T04:00:00.000Z')
 
 const task: TaskRecord = {
   id: 'tsk_1',
-  title: 'Check TRPMCN5 cartons',
+  title: 'Check CTN-TEST cartons',
   category: 'operations',
   status: 'todo',
   kind: 'todo',
@@ -31,10 +31,10 @@ const task: TaskRecord = {
 describe('task notices', () => {
   it('names the raiser, the IST due time and how to finish', () => {
     expect(taskNoticeText(task, 'Alex', now)).toBe(
-      'New task from Alex · due 17:00\n*Check TRPMCN5 cartons*\nReply *done* to this message or react 👍 when it is finished.',
+      'New task from Alex · due 17:00\n*Check CTN-TEST cartons*\nReply *done* to this message or react 👍 when it is finished.',
     )
     expect(taskNoticeText({ ...task, dueAt: null, description: 'Bay 3' }, 'Alex', now)).toBe(
-      'New task from Alex\n*Check TRPMCN5 cartons*\nBay 3\nReply *done* to this message or react 👍 when it is finished.',
+      'New task from Alex\n*Check CTN-TEST cartons*\nBay 3\nReply *done* to this message or react 👍 when it is finished.',
     )
   })
 

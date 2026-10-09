@@ -10,9 +10,13 @@
     "test": "vitest run",
     "test:pg": "vitest run pg.test",
     "set-password": "tsx src/scripts/set-password.ts",
-    "create-admin": "tsx src/scripts/create-admin.ts"
+    "create-admin": "tsx src/scripts/create-admin.ts",
+    "eval": "tsx src/scripts/eval.ts",
+    "try-tools": "tsx src/scripts/try-tools.ts"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.1148.0",
+    "@aws-sdk/s3-request-presigner": "^3.1148.0",
     "@hono/node-server": "^1.19.0",
     "@typesafe-ai/sdk": "^0.6.0",
     "drizzle-orm": "^0.44.5",
@@ -30,6 +34,7 @@
     "drizzle-kit": "^0.31.5",
     "tsx": "^4.20.5",
     "typescript": "^5.9.2",
-    "vitest": "^3.2.4"
+    "vitest": "^3.2.4",
+    "yaml": "^2.9.1"
   }
 }

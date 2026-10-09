@@ -1,19 +1,20 @@
 import { serve } from '@hono/node-server'
 import { drizzle, type PostgresJsDatabase } from 'drizzle-orm/postgres-js'
 import postgres from 'postgres'
-import { extractPurchaseOrder } from './agent/extract'
-import { createExtractTask } from './agent/extract-task'
-import { createJudge } from './agent/judge'
-import { createCompleteChat } from './agent/reply'
+import { readPurchaseOrder } from './agent/extract'
+import { createApprovalIntent } from './agent/approval-intent'
+import { createChatModel } from './agent/llm'
 import { createApp, type AppDeps } from './app'
 import { DrizzleStore } from './db/drizzle-store'
 import { migrate } from './db/migrate'
 import * as schema from './db/schema'
-import { seedCustomerMaterials, seedIfEmpty, seedUnitsOfMeasure } from './db/seed'
+import { seedIfEmpty } from './db/seed'
 import { loadEnv, type Env } from './env'
+import { dataBrief } from './queries/brief'
 import { startWorker } from './jobs/worker'
 import { requeueTaskNotices } from './tasks/notify'
 import { HttpEvolution } from './whatsapp/evolution'
+import { createFileStore, fileStoreWarning } from './files/store'
 
 type Database = PostgresJsDatabase<typeof schema>
 
@@ -23,8 +24,6 @@ async function seedDemo(db: Database, env: Env): Promise<void> {
     throw new Error('SEED_DEMO=1 in production needs SEED_PASSWORD. Set it, or remove SEED_DEMO.')
   }
   await seedIfEmpty(db, env.seedPassword)
-  await seedCustomerMaterials(db)
-  await seedUnitsOfMeasure(db)
 }
 
 async function pointWebhookHere(deps: AppDeps): Promise<void> {
@@ -43,13 +42,18 @@ async function main() {
   const db = drizzle(sql, { schema })
   await seedDemo(db, env)
   const store = new DrizzleStore(db)
+  const files = createFileStore(env.fileStore, env.s3)
+  const fileWarning = fileStoreWarning(files, env.production)
+  if (fileWarning) console.warn(`\n${'!'.repeat(100)}\n${fileWarning}\n${'!'.repeat(100)}\n`)
   const deps: AppDeps = {
     store,
     evolution: new HttpEvolution(env),
-    extractPurchaseOrder: (pdf) => extractPurchaseOrder(pdf, env),
-    judgeIntent: createJudge(env),
-    extractTask: createExtractTask(env),
-    completeChat: createCompleteChat(env),
+    sapSql: sql,
+    files,
+    readPurchaseOrder: (pdf) => readPurchaseOrder(pdf, env),
+    dataBrief: () => dataBrief(sql, store),
+    chatModel: createChatModel(env),
+    approvalIntent: createApprovalIntent(env),
     enqueue: async (job) => Boolean(await store.enqueueJob(job)),
     botMode: env.botMode,
     now: () => new Date(),

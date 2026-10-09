@@ -1,115 +1,88 @@
-import Link from 'next/link'
 import { TaskBoard } from './task-board'
-import { api } from '@/lib/api'
+import { DataAsOf, NotImported } from '@/components/data-as-of'
+import { Kpi, KpiStrip } from '@/components/kpi'
+import { SalesOrderTable } from '@/components/sales-order-table'
+import { SectionHead } from '@/components/section-head'
+import { api, getMeta } from '@/lib/api'
+import { day, dayShort, inrShort, num } from '@/lib/format'
 import type { CommandCentre } from '@/lib/types'
 
 function whatsappLabel(status: CommandCentre['whatsapp']['status']): string {
   if (status === 'connected') return 'Connected'
-  if (status === 'qr_pending') return 'Waiting'
-  return 'Off'
+  if (status === 'qr_pending') return 'Waiting for scan'
+  return 'Not connected'
+}
+
+function monthStart(iso: string): string {
+  return `${iso.slice(0, 8)}01`
 }
 
 export default async function CommandCentrePage() {
-  const data = await api<CommandCentre>('/api/command-centre')
+  const [meta, data] = await Promise.all([getMeta(), api<CommandCentre>('/api/command-centre')])
+  const asOf = data.dataAsOf ?? meta.dataAsOf
+  const { kpis } = data
   return (
     <>
-      <section className="grid3">
-        <article className="card p6 kpi">
-          <div className="top">
-            <div className="chip ink">PO</div>
-          </div>
-          <div className="lab">Open orders</div>
-          <div className="val num">{data.openOrders}</div>
-          <div className="stamp">Customer purchase orders still open</div>
-        </article>
-        <article className={`card p6 kpi${data.shortLines > 0 ? ' attn' : ''}`}>
-          <div className="top">
-            <div className="chip amber">!</div>
-          </div>
-          <div className="lab">Lines short of stock</div>
-          <div className="val num">{data.shortLines}</div>
-          <div className="stamp">Open lines on items already overdrawn</div>
-        </article>
-        <article className="card p6 kpi">
-          <div className="top">
-            <div className="chip leaf">WA</div>
-          </div>
-          <div className="lab">WhatsApp</div>
-          <div className="val">{whatsappLabel(data.whatsapp.status)}</div>
-          <div className="stamp">{data.whatsapp.phoneNumber ?? 'Not linked'}</div>
-        </article>
-      </section>
+      <DataAsOf meta={{ ...meta, dataAsOf: asOf }}>
+        WhatsApp{' '}
+        <span className={data.whatsapp.status === 'connected' ? 'pill ok' : 'pill amber'}>
+          {whatsappLabel(data.whatsapp.status)}
+        </span>
+        {data.whatsapp.phoneNumber ? <span className="num"> {data.whatsapp.phoneNumber}</span> : null}
+      </DataAsOf>
+      {asOf ? (
+        <KpiStrip label="Today in figures">
+          <Kpi
+            chip="SO"
+            label="Open sales orders"
+            href="/orders?state=open"
+            value={num(kpis.openSalesOrders)}
+            stamp={kpis.staleOpenSalesOrders > 0 ? `${num(kpis.staleOpenSalesOrders)} older than 90 days` : 'None older than 90 days'}
+            attn={kpis.staleOpenSalesOrders > 0}
+          />
+          <Kpi
+            chip="₹"
+            tone="leaf"
+            label="Sales this month"
+            value={inrShort(kpis.salesMtdValue)}
+            stamp={`Including tax · ${num(kpis.salesMtdCount)} raised, ${dayShort(monthStart(asOf))} – ${dayShort(asOf)}`}
+          />
+          <Kpi
+            chip="INV"
+            label="Invoices on the last day"
+            href="/dispatch"
+            value={num(kpis.invoicesLastDay)}
+            stamp={`Dated ${day(asOf)}`}
+          />
+          <Kpi
+            chip="FG"
+            tone={kpis.fgShortItems > 0 ? 'amber' : 'ink'}
+            label="Finished goods short"
+            href="/inventory?tab=fg"
+            value={num(kpis.fgShortItems)}
+            stamp="Items with more committed than on hand"
+            attn={kpis.fgShortItems > 0}
+          />
+        </KpiStrip>
+      ) : (
+        <NotImported what="Sales, invoice and stock figures" />
+      )}
       <section className="sec">
-        <div className="sechead">
-          <div>
-            <h3>Task board</h3>
-            <p>Add work, give it a category, and assign it. Drag a card to move it.</p>
-          </div>
-          <span className="zid">Zone 1 · Tasks</span>
-        </div>
+        <SectionHead
+          title="Task board"
+          sub="Add work, give it a category, and assign it. Drag a card to move it."
+          zid="Zone 1 · Tasks"
+        />
         <TaskBoard />
       </section>
       <section className="sec">
-        <div className="sechead">
-          <div>
-            <h3>Recent orders</h3>
-            <p>Newest customer purchase orders in the preview database</p>
-          </div>
-          <span className="zid">Zone 1 · Orders</span>
-        </div>
-        <OrderTable orders={data.recentOrders} />
+        <SectionHead title="Recent sales orders" sub="The five newest sales orders in SAP" zid="Zone 1 · Orders" />
+        <SalesOrderTable
+          caption="Five newest sales orders"
+          rows={data.recentSalesOrders ?? []}
+          empty={<p>{asOf ? 'No sales orders in SAP yet.' : 'Sales orders appear after the SAP import.'}</p>}
+        />
       </section>
     </>
-  )
-}
-
-function OrderTable({
-  orders,
-}: {
-  orders: Array<{
-    id: string
-    poNumber: string
-    customerName: string
-    status: 'open' | 'closed'
-    source: 'seed' | 'whatsapp' | 'desk'
-    poDate: string | null
-    lineCount: number
-  }>
-}) {
-  if (orders.length === 0) return <div className="card empty">No orders yet.</div>
-  return (
-    <div className="tblwrap">
-      <table>
-        <thead>
-          <tr>
-            <th>Purchase order</th>
-            <th>Customer</th>
-            <th>Status</th>
-            <th>Source</th>
-            <th className="r">Lines</th>
-          </tr>
-        </thead>
-        <tbody>
-          {orders.map((order) => (
-            <tr key={order.id}>
-              <td>
-                <Link href={`/orders/${order.id}`}>
-                  <b>{order.poNumber}</b>
-                </Link>
-                <div className="sub num">{order.poDate ?? 'No date'}</div>
-              </td>
-              <td>{order.customerName}</td>
-              <td>
-                <span className={order.status === 'open' ? 'pill ok' : 'pill grey'}>{order.status}</span>
-              </td>
-              <td>
-                <span className="pill grey">{order.source}</span>
-              </td>
-              <td className="r num">{order.lineCount}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
   )
 }

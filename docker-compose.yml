@@ -8,7 +8,7 @@ services:
     ports:
       - "5432:5432"
     volumes:
-      - pgdata:/var/lib/postgresql
+      - pgdata18:/var/lib/postgresql
       - ./docker/postgres/init.sql:/docker-entrypoint-initdb.d/01-evolution.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U tierra -d tierra"]
@@ -58,6 +58,9 @@ services:
       OPENAI_BASE_URL: ${OPENAI_BASE_URL:-https://api.openai.com/v1}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4o-mini}
+      OPENAI_AGENT_MODEL: ${OPENAI_AGENT_MODEL:-}
+      OPENAI_REASONING_EFFORT: ${OPENAI_REASONING_EFFORT:-}
+      OPENAI_AGENT_REASONING_EFFORT: ${OPENAI_AGENT_REASONING_EFFORT:-}
       TYPESAFE_API_KEY: ${TYPESAFE_API_KEY:-}
       WHATSAPP_BOT_MODE: ${WHATSAPP_BOT_MODE:-personal}
       SEED_DEMO: "1"
@@ -66,4 +69,4 @@ services:
       - "3002:3002"
 
 volumes:
-  pgdata:
+  pgdata18:

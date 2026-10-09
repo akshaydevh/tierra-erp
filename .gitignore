@@ -13,3 +13,11 @@ Reference
 docker
 
 graphify-out
+# SAP data never goes in git
+.venv
+__pycache__
+*.parquet
+*.dump
+*.csv.gz
+fixture*.sql
+!*.synthetic.sql

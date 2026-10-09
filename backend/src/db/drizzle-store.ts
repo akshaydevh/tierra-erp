@@ -3,46 +3,89 @@ import { and, asc, desc, eq, gt, inArray, isNotNull, isNull, lt, lte, ne, sql, t
 import { alias } from 'drizzle-orm/pg-core'
 import type { PostgresJsDatabase } from 'drizzle-orm/postgres-js'
 import * as schema from './schema'
-import type { RecentMessage, Store, ThreadMessage } from './store'
+import {
+  CustomerPoRevisionTakenError,
+  PartyGroupConflictError,
+  normalizeMembers,
+  type RecentMessage,
+  type Store,
+  type ThreadMessage,
+  type WaGroupPatch,
+} from './store'
 import type {
+  BankLineReattribution,
+  DailyInputsPatch,
+  DailyReportInputs,
+  DailyReportRecord,
+  GlLabel,
+  Manpower,
+  NewDailyReport,
+  Approval,
+  ApprovalPatch,
+  ApprovalStatus,
+  DocumentInfo,
+  NewApproval,
+  NewProcurementRequest,
+  NewSalesOrder,
+  NewStockAdjustment,
+  OutboundRow,
+  ProcurementRequest,
+  ProcurementStatus,
+  SalesOrder,
+  SalesOrderLine,
+  SalesOrderPatch,
+  SalesOrderStatus,
+  StockAdjustment,
   AccountLink,
-  Balance,
   ChatContext,
+  CheckVerdict,
   ClaimedMessage,
-  Customer,
-  Item,
+  CustomerItemRef,
+  CustomerPo,
+  CustomerPoLine,
+  CustomerPoPatch,
+  CustomerPoStatus,
+  CustomerPoSummary,
+  CustomerSite,
+  DocumentLink,
+  InventoryCheck,
+  InventoryCheckLine,
+  ItemOwnerOverride,
+  NewCustomerPo,
+  NewInventoryCheck,
+  PartyAlias,
+  RepeatHit,
+  StockOverlay,
   JobRecord,
   JobStatus,
   MessageKind,
   NewJob,
+  NewPartyGroup,
   NewTask,
-  OrderLineRecord,
-  NewOrderLine,
-  OrderRecord,
-  PendingConfirmation,
-  ProcurementOrderRecord,
-  ProductionPlan,
-  ProductionEntryRecord,
+  PartyGroup,
+  PartyMember,
   PublicUser,
   Role,
   StoredDocument,
+  FetchedDocument,
   StoredMessage,
   TaskRecord,
   TaskStatus,
   User,
+  WaGroup,
   WhatsappConnection,
   WhatsappStatus,
 } from './types'
 import {
+  asOutwardsBasis,
   JOB_STATUSES,
   MESSAGE_KINDS,
-  asItemKind,
+  RESERVING_SO_STATUSES,
   asRole,
   asTaskCategory,
   asTaskKind,
   asTaskStatus,
   asTaskVia,
-  orderSourceForThread,
   toPublicUser,
 } from './types'
 
@@ -70,6 +113,37 @@ function isUniqueViolation(error: unknown, constraint: string): boolean {
   return false
 }
 
+function toDailyInputs(row: typeof schema.dailyReportInputs.$inferSelect, enteredByName: string | null): DailyReportInputs {
+  return {
+    reportDate: row.reportDate,
+    productionRun: row.productionRun,
+    packingRun: row.packingRun,
+    cartoningRun: row.cartoningRun,
+    manpower: (row.manpower as Manpower | null) ?? null,
+    bananaKgEstimate: row.bananaKgEstimate,
+    cassavaKgEstimate: row.cassavaKgEstimate,
+    inwardRemarks: row.inwardRemarks ?? {},
+    notes: row.notes,
+    enteredBy: row.enteredBy,
+    enteredByName,
+    enteredAt: row.enteredAt.toISOString(),
+  }
+}
+
+function toDailyReport(row: typeof schema.dailyReports.$inferSelect): DailyReportRecord {
+  return {
+    id: row.id,
+    reportDate: row.reportDate,
+    version: row.version,
+    basis: asOutwardsBasis(row.basis) ?? 'created_window',
+    dataAsOf: row.dataAsOf,
+    payload: row.payload,
+    documentId: row.documentId,
+    generatedBy: row.generatedBy,
+    createdAt: row.createdAt.toISOString(),
+  }
+}
+
 function toJob(row: typeof schema.jobs.$inferSelect): JobRecord {
   return {
     id: row.id,
@@ -82,6 +156,16 @@ function toJob(row: typeof schema.jobs.$inferSelect): JobRecord {
     lockedUntil: row.lockedUntil?.toISOString() ?? null,
     idempotencyKey: row.idempotencyKey,
     lastError: row.lastError,
+  }
+}
+
+function toWaGroup(row: typeof schema.waGroups.$inferSelect): WaGroup {
+  return {
+    jid: row.jid,
+    subject: row.subject,
+    partyGroupId: row.partyGroupId,
+    sendSo: row.sendSo,
+    updatedAt: row.updatedAt.toISOString(),
   }
 }
 
@@ -202,92 +286,6 @@ export class DrizzleStore implements Store {
       await tx.update(schema.users).set({ role: 'admin' }).where(eq(schema.users.id, userId))
       return 'ok'
     })
-  }
-
-  async listCustomers(): Promise<Customer[]> {
-    return this.db.select().from(schema.customers).orderBy(schema.customers.name)
-  }
-
-  async listItems(): Promise<Item[]> {
-    const rows = await this.db.select().from(schema.items).orderBy(schema.items.sku)
-    return rows.map((row) => ({ ...row, kind: asItemKind(row.kind) }))
-  }
-
-  async listBalances(): Promise<Balance[]> {
-    const rows = await this.db.select().from(schema.inventoryBalances)
-    return rows.map((row) => ({
-      id: row.id,
-      customerId: row.customerId,
-      itemId: row.itemId,
-      onHand: row.onHand,
-    }))
-  }
-
-  async listOrders(): Promise<OrderRecord[]> {
-    const rows = await this.db
-      .select({
-        id: schema.orders.id,
-        customerId: schema.orders.customerId,
-        customerName: schema.customers.name,
-        poNumber: schema.orders.poNumber,
-        poDate: schema.orders.poDate,
-        status: schema.orders.status,
-        source: schema.orders.source,
-        createdAt: schema.orders.createdAt,
-      })
-      .from(schema.orders)
-      .innerJoin(schema.customers, eq(schema.customers.id, schema.orders.customerId))
-      .orderBy(desc(schema.orders.createdAt))
-    return rows.map((row) => ({
-      id: row.id,
-      customerId: row.customerId,
-      customerName: row.customerName,
-      poNumber: row.poNumber,
-      poDate: row.poDate,
-      status: row.status as OrderRecord['status'],
-      source: row.source as OrderRecord['source'],
-      createdAt: row.createdAt.toISOString(),
-    }))
-  }
-
-  async listOrderLines(): Promise<OrderLineRecord[]> {
-    const rows = await this.db
-      .select({
-        id: schema.orderLines.id,
-        orderId: schema.orderLines.orderId,
-        itemId: schema.orderLines.itemId,
-        sku: schema.items.sku,
-        itemName: schema.items.name,
-        description: schema.orderLines.description,
-        quantity: schema.orderLines.quantity,
-        unit: schema.orderLines.unit,
-        unitPrice: schema.orderLines.unitPrice,
-      })
-      .from(schema.orderLines)
-      .innerJoin(schema.items, eq(schema.items.id, schema.orderLines.itemId))
-    return rows
-  }
-
-  async orderHasDocument(orderId: string): Promise<boolean> {
-    const [row] = await this.db
-      .select({ id: schema.orderDocuments.id })
-      .from(schema.orderDocuments)
-      .where(eq(schema.orderDocuments.orderId, orderId))
-      .limit(1)
-    return Boolean(row)
-  }
-
-  async getOrderDocument(orderId: string): Promise<StoredDocument | null> {
-    const [row] = await this.db
-      .select({
-        filename: schema.orderDocuments.filename,
-        mimeType: schema.orderDocuments.mimeType,
-        content: schema.orderDocuments.content,
-      })
-      .from(schema.orderDocuments)
-      .where(eq(schema.orderDocuments.orderId, orderId))
-      .limit(1)
-    return row ?? null
   }
 
   async getWhatsapp(): Promise<WhatsappConnection> {
@@ -416,15 +414,25 @@ export class DrizzleStore implements Store {
     if (remoteJids.length === 0 || limit <= 0) return []
     const rows = await this.db
       .select({
+        id: schema.whatsappMessages.evolutionMessageId,
         remoteJid: schema.whatsappMessages.remoteJid,
         fromMe: schema.whatsappMessages.fromMe,
         body: schema.whatsappMessages.body,
+        purpose: schema.whatsappMessages.purpose,
+        createdAt: schema.whatsappMessages.createdAt,
       })
       .from(schema.whatsappMessages)
       .where(inArray(schema.whatsappMessages.remoteJid, remoteJids))
-      .orderBy(desc(schema.whatsappMessages.createdAt))
+      .orderBy(desc(schema.whatsappMessages.createdAt), desc(schema.whatsappMessages.id))
       .limit(limit)
-    return rows.reverse()
+    return rows.reverse().map((row) => ({ ...row, createdAt: row.createdAt.toISOString() }))
+  }
+
+  async markMessageAnswered(evolutionMessageId: string, at: Date): Promise<void> {
+    await this.db
+      .update(schema.whatsappMessages)
+      .set({ answeredAt: at })
+      .where(and(eq(schema.whatsappMessages.evolutionMessageId, evolutionMessageId), isNull(schema.whatsappMessages.answeredAt)))
   }
 
   async listThread(remoteJid: string): Promise<ThreadMessage[]> {
@@ -435,6 +443,7 @@ export class DrizzleStore implements Store {
         hasPdf: schema.whatsappMessages.hasPdf,
         body: schema.whatsappMessages.body,
         createdAt: schema.whatsappMessages.createdAt,
+        answeredAt: schema.whatsappMessages.answeredAt,
         filename: schema.orderDocuments.filename,
       })
       .from(schema.whatsappMessages)
@@ -458,6 +467,7 @@ export class DrizzleStore implements Store {
         body: row.body,
         filename: row.filename,
         createdAt: row.createdAt.toISOString(),
+        answeredAt: row.answeredAt?.toISOString() ?? null,
       })
     }
     return [...thread.values()]
@@ -478,297 +488,42 @@ export class DrizzleStore implements Store {
     return Boolean(row)
   }
 
-  async insertDocument(input: StoredDocument & { messageId: string }): Promise<string> {
+  async insertDocument(input: StoredDocument & { messageId?: string | null } & Partial<DocumentLink>): Promise<string> {
     const id = newId('doc')
     await this.db.insert(schema.orderDocuments).values({
       id,
-      messageId: input.messageId,
+      messageId: input.messageId ?? null,
       filename: input.filename,
       mimeType: input.mimeType,
       content: input.content,
+      kind: input.kind ?? 'other',
+      subjectType: input.subjectType ?? null,
+      subjectId: input.subjectId ?? null,
+      version: input.version ?? 1,
     })
     return id
   }
 
-  async listProductionEntries(): Promise<ProductionEntryRecord[]> {
-    const rows = await this.db
+  async linkDocument(id: string, link: DocumentLink): Promise<void> {
+    const set: Partial<typeof schema.orderDocuments.$inferInsert> = { kind: link.kind }
+    if (link.subjectType !== undefined) set.subjectType = link.subjectType
+    if (link.subjectId !== undefined) set.subjectId = link.subjectId
+    if (link.version !== undefined) set.version = link.version
+    await this.db.update(schema.orderDocuments).set(set).where(eq(schema.orderDocuments.id, id))
+  }
+
+  async getDocument(id: string): Promise<FetchedDocument | null> {
+    const [row] = await this.db
       .select({
-        id: schema.productionEntries.id,
-        orderId: schema.productionEntries.orderId,
-        poNumber: schema.orders.poNumber,
-        customerName: schema.customers.name,
-        finishedGoodsKg: schema.productionEntries.finishedGoodsKg,
-        kgBananaPerKgChips: schema.productionEntries.kgBananaPerKgChips,
-        bananaKg: schema.productionEntries.bananaKg,
-        sourceMonths: schema.productionEntries.sourceMonths,
-        createdAt: schema.productionEntries.createdAt,
+        filename: schema.orderDocuments.filename,
+        mimeType: schema.orderDocuments.mimeType,
+        content: schema.orderDocuments.content,
+        kind: schema.orderDocuments.kind,
       })
-      .from(schema.productionEntries)
-      .innerJoin(schema.orders, eq(schema.orders.id, schema.productionEntries.orderId))
-      .innerJoin(schema.customers, eq(schema.customers.id, schema.orders.customerId))
-      .orderBy(desc(schema.productionEntries.createdAt))
-    return rows.map((row) => ({
-      ...row,
-      createdAt: row.createdAt.toISOString(),
-    }))
-  }
-
-  async listProcurementOrders(): Promise<ProcurementOrderRecord[]> {
-    const pendingCustomer = alias(schema.customers, 'pending_customer')
-    const rows = await this.db
-      .select({
-        id: schema.procurementOrders.id,
-        orderId: schema.procurementOrders.orderId,
-        orderPoNumber: schema.orders.poNumber,
-        pendingPoNumber: schema.pendingOrders.poNumber,
-        orderCustomerName: schema.customers.name,
-        pendingCustomerName: pendingCustomer.name,
-        productionEntryId: schema.procurementOrders.productionEntryId,
-        itemName: schema.items.name,
-        quantityKg: schema.procurementOrders.quantityKg,
-        unit: schema.procurementOrders.unit,
-        assigneeId: schema.procurementOrders.assigneeId,
-        assigneeName: schema.users.name,
-        createdAt: schema.procurementOrders.createdAt,
-      })
-      .from(schema.procurementOrders)
-      .leftJoin(schema.orders, eq(schema.orders.id, schema.procurementOrders.orderId))
-      .leftJoin(schema.customers, eq(schema.customers.id, schema.orders.customerId))
-      .leftJoin(schema.pendingOrders, eq(schema.pendingOrders.id, schema.procurementOrders.pendingOrderId))
-      .leftJoin(pendingCustomer, eq(pendingCustomer.id, schema.pendingOrders.customerId))
-      .innerJoin(schema.items, eq(schema.items.id, schema.procurementOrders.itemId))
-      .innerJoin(schema.users, eq(schema.users.id, schema.procurementOrders.assigneeId))
-      .orderBy(desc(schema.procurementOrders.createdAt))
-    return rows.map((row) => ({
-      id: row.id,
-      orderId: row.orderId,
-      poNumber: row.orderPoNumber ?? row.pendingPoNumber ?? '',
-      customerName: row.orderCustomerName ?? row.pendingCustomerName ?? '',
-      productionEntryId: row.productionEntryId,
-      itemName: row.itemName,
-      quantityKg: row.quantityKg,
-      unit: row.unit,
-      assigneeId: row.assigneeId,
-      assigneeName: row.assigneeName,
-      createdAt: row.createdAt.toISOString(),
-    }))
-  }
-
-  async holdShortOrder(input: {
-    customerId: string
-    poNumber: string
-    poDate: string | null
-    remoteJid: string
-    documentId: string
-    lines: NewOrderLine[]
-    shortages: Array<{ itemId: string; quantity: number; unit: string }>
-    assigneeId: string
-  }): Promise<{ id: string }> {
-    const id = newId('pnd')
-    await this.db.transaction(async (tx) => {
-      await tx.insert(schema.pendingOrders).values({
-        id,
-        customerId: input.customerId,
-        poNumber: input.poNumber,
-        poDate: input.poDate,
-        remoteJid: input.remoteJid,
-        documentId: input.documentId,
-        status: 'awaiting_admin',
-      })
-      for (const line of input.lines) {
-        await tx.insert(schema.pendingOrderLines).values({
-          id: newId('pln'),
-          pendingOrderId: id,
-          itemId: line.itemId,
-          description: line.description,
-          quantity: line.quantity,
-          unit: line.unit,
-          unitPrice: line.unitPrice,
-        })
-      }
-      for (const shortage of input.shortages) {
-        await tx.insert(schema.procurementOrders).values({
-          id: newId('prc'),
-          pendingOrderId: id,
-          itemId: shortage.itemId,
-          quantityKg: String(shortage.quantity),
-          unit: shortage.unit,
-          assigneeId: input.assigneeId,
-        })
-      }
-    })
-    return { id }
-  }
-
-  async listAwaitingConfirmations(remoteJid: string): Promise<PendingConfirmation[]> {
-    const pending = await this.db
-      .select()
-      .from(schema.pendingOrders)
-      .where(and(eq(schema.pendingOrders.remoteJid, remoteJid), eq(schema.pendingOrders.status, 'awaiting_admin')))
-      .orderBy(desc(schema.pendingOrders.createdAt), desc(schema.pendingOrders.id))
-    if (pending.length === 0) return []
-    const lines = await this.db
-      .select()
-      .from(schema.pendingOrderLines)
-      .where(inArray(schema.pendingOrderLines.pendingOrderId, pending.map((row) => row.id)))
-    return pending.map((row) => ({
-      id: row.id,
-      poNumber: row.poNumber,
-      lines: lines
-        .filter((line) => line.pendingOrderId === row.id)
-        .map((line) => ({
-          itemId: line.itemId,
-          description: line.description,
-          quantity: line.quantity,
-          unit: line.unit,
-          unitPrice: line.unitPrice,
-        })),
-    }))
-  }
-
-  async confirmPendingOrder(
-    id: string,
-    production: ProductionPlan | null,
-  ): Promise<{ id: string; poNumber: string; productionEntryId: string | null; procurementOrderId: string | null } | null> {
-    return this.db.transaction(async (tx) => {
-      const pendingRows = await tx
-        .select()
-        .from(schema.pendingOrders)
-        .where(and(eq(schema.pendingOrders.id, id), eq(schema.pendingOrders.status, 'awaiting_admin')))
-        .limit(1)
-      const pending = pendingRows[0]
-      if (!pending) return null
-      const lines = await tx
-        .select()
-        .from(schema.pendingOrderLines)
-        .where(eq(schema.pendingOrderLines.pendingOrderId, pending.id))
-      const orderId = newId('ord')
-      await tx.insert(schema.orders).values({
-        id: orderId,
-        customerId: pending.customerId,
-        poNumber: pending.poNumber,
-        poDate: pending.poDate,
-        status: 'open',
-        source: orderSourceForThread(pending.remoteJid),
-      })
-      for (const line of lines) {
-        await tx.insert(schema.orderLines).values({
-          id: newId('lin'),
-          orderId,
-          itemId: line.itemId,
-          description: line.description,
-          quantity: line.quantity,
-          unit: line.unit,
-          unitPrice: line.unitPrice,
-        })
-      }
-      if (pending.documentId) {
-        await tx
-          .update(schema.orderDocuments)
-          .set({ orderId })
-          .where(eq(schema.orderDocuments.id, pending.documentId))
-      }
-      await tx
-        .update(schema.procurementOrders)
-        .set({ orderId })
-        .where(eq(schema.procurementOrders.pendingOrderId, pending.id))
-      await tx.update(schema.pendingOrders).set({ status: 'confirmed' }).where(eq(schema.pendingOrders.id, pending.id))
-      if (!production) return { id: orderId, poNumber: pending.poNumber, productionEntryId: null, procurementOrderId: null }
-      const productionEntryId = newId('prd')
-      const procurementOrderId = newId('prc')
-      await tx.insert(schema.productionEntries).values({
-        id: productionEntryId,
-        orderId,
-        finishedGoodsKg: production.finishedGoodsKg,
-        kgBananaPerKgChips: production.kgBananaPerKgChips,
-        bananaKg: production.bananaKg,
-        sourceMonths: production.sourceMonths,
-      })
-      await tx.insert(schema.procurementOrders).values({
-        id: procurementOrderId,
-        orderId,
-        productionEntryId,
-        itemId: production.rawItemId,
-        quantityKg: production.bananaKg,
-        unit: 'kg',
-        assigneeId: production.assigneeId,
-      })
-      return { id: orderId, poNumber: pending.poNumber, productionEntryId, procurementOrderId }
-    })
-  }
-
-  async declinePendingOrder(id: string): Promise<{ poNumber: string } | null> {
-    const pendingRows = await this.db
-      .select()
-      .from(schema.pendingOrders)
-      .where(and(eq(schema.pendingOrders.id, id), eq(schema.pendingOrders.status, 'awaiting_admin')))
+      .from(schema.orderDocuments)
+      .where(eq(schema.orderDocuments.id, id))
       .limit(1)
-    const pending = pendingRows[0]
-    if (!pending) return null
-    await this.db.update(schema.pendingOrders).set({ status: 'declined' }).where(eq(schema.pendingOrders.id, pending.id))
-    return { poNumber: pending.poNumber }
-  }
-
-  async createOrder(input: {
-    customerId: string
-    poNumber: string
-    poDate: string | null
-    remoteJid: string
-    lines: import('./types').NewOrderLine[]
-    document: StoredDocument & { messageId: string }
-    production: import('./types').ProductionPlan | null
-  }): Promise<{ id: string; productionEntryId: string | null; procurementOrderId: string | null }> {
-    return this.db.transaction(async (tx) => {
-      const id = newId('ord')
-      await tx.insert(schema.orders).values({
-        id,
-        customerId: input.customerId,
-        poNumber: input.poNumber,
-        poDate: input.poDate,
-        status: 'open',
-        source: orderSourceForThread(input.remoteJid),
-      })
-      for (const line of input.lines) {
-        await tx.insert(schema.orderLines).values({
-          id: newId('lin'),
-          orderId: id,
-          itemId: line.itemId,
-          description: line.description,
-          quantity: line.quantity,
-          unit: line.unit,
-          unitPrice: line.unitPrice,
-        })
-      }
-      await tx.insert(schema.orderDocuments).values({
-        id: newId('doc'),
-        orderId: id,
-        messageId: input.document.messageId,
-        filename: input.document.filename,
-        mimeType: input.document.mimeType,
-        content: input.document.content,
-      })
-      if (!input.production) return { id, productionEntryId: null, procurementOrderId: null }
-      const productionEntryId = newId('prd')
-      const procurementOrderId = newId('prc')
-      await tx.insert(schema.productionEntries).values({
-        id: productionEntryId,
-        orderId: id,
-        finishedGoodsKg: input.production.finishedGoodsKg,
-        kgBananaPerKgChips: input.production.kgBananaPerKgChips,
-        bananaKg: input.production.bananaKg,
-        sourceMonths: input.production.sourceMonths,
-      })
-      await tx.insert(schema.procurementOrders).values({
-        id: procurementOrderId,
-        orderId: id,
-        productionEntryId,
-        itemId: input.production.rawItemId,
-        quantityKg: input.production.bananaKg,
-        unit: 'kg',
-        assigneeId: input.production.assigneeId,
-      })
-      return { id, productionEntryId, procurementOrderId }
-    })
+    return row ? { ...row, kind: row.kind as FetchedDocument['kind'] } : null
   }
 
   private async selectTasks(where: SQL): Promise<TaskRecord[]> {
@@ -917,6 +672,23 @@ export class DrizzleStore implements Store {
     return cancelled.length
   }
 
+  async reopenTask(id: string, patch: { title: string; description: string | null }): Promise<TaskRecord | null> {
+    const updated = await this.db
+      .update(schema.tasks)
+      .set({
+        title: patch.title.trim(),
+        description: patch.description,
+        status: 'todo',
+        completedAt: null,
+        notifiedAt: null,
+        waMessageId: null,
+        assignedAt: new Date(),
+      })
+      .where(eq(schema.tasks.id, id))
+      .returning({ id: schema.tasks.id })
+    return updated.length ? this.getTask(id) : null
+  }
+
   async updateTaskAssignment(
     id: string,
     assignment: { assigneeId: string | null; assigneeRole: Role | null },
@@ -972,6 +744,892 @@ export class DrizzleStore implements Store {
     await this.db.update(schema.tasks).set({ notifiedAt: at, waMessageId }).where(eq(schema.tasks.id, id))
   }
 
+  private async partyGroupsWhere(where?: SQL): Promise<PartyGroup[]> {
+    const groups = await this.db
+      .select()
+      .from(schema.partyGroups)
+      .where(where)
+      .orderBy(asc(schema.partyGroups.name))
+    if (groups.length === 0) return []
+    const members = await this.db
+      .select()
+      .from(schema.partyGroupMembers)
+      .where(
+        inArray(
+          schema.partyGroupMembers.partyGroupId,
+          groups.map((group) => group.id),
+        ),
+      )
+      .orderBy(asc(schema.partyGroupMembers.kind), asc(schema.partyGroupMembers.value))
+    return groups.map((group) => ({
+      id: group.id,
+      name: group.name,
+      alias: group.alias,
+      members: members
+        .filter((member) => member.partyGroupId === group.id)
+        .map((member) => ({ kind: member.kind as PartyMember['kind'], value: member.value })),
+    }))
+  }
+
+  async listPartyGroups(): Promise<PartyGroup[]> {
+    return this.partyGroupsWhere()
+  }
+
+  async getPartyGroup(id: string): Promise<PartyGroup | null> {
+    const [group] = await this.partyGroupsWhere(eq(schema.partyGroups.id, id))
+    return group ?? null
+  }
+
+  /** Writes the group and its members in one transaction; a taken name or member becomes PartyGroupConflictError. */
+  private async writePartyGroup(id: string, input: NewPartyGroup, create: boolean): Promise<boolean> {
+    const name = input.name.trim()
+    const alias = input.alias?.trim() || null
+    const members = normalizeMembers(input.members)
+    try {
+      return await this.db.transaction(async (tx) => {
+        if (create) {
+          await tx.insert(schema.partyGroups).values({ id, name, alias })
+        } else {
+          const updated = await tx
+            .update(schema.partyGroups)
+            .set({ name, alias, updatedAt: new Date() })
+            .where(eq(schema.partyGroups.id, id))
+            .returning({ id: schema.partyGroups.id })
+          if (updated.length === 0) return false
+          await tx.delete(schema.partyGroupMembers).where(eq(schema.partyGroupMembers.partyGroupId, id))
+        }
+        if (members.length > 0) {
+          await tx.insert(schema.partyGroupMembers).values(members.map((member) => ({ partyGroupId: id, ...member })))
+        }
+        return true
+      })
+    } catch (error) {
+      if (isUniqueViolation(error, 'party_groups_name_unique')) {
+        throw new PartyGroupConflictError(`A party group called ${name} already exists`)
+      }
+      if (isUniqueViolation(error, 'party_group_members_kind_value_pk')) {
+        const taken = await this.db
+          .select({ value: schema.partyGroupMembers.value, owner: schema.partyGroups.name })
+          .from(schema.partyGroupMembers)
+          .innerJoin(schema.partyGroups, eq(schema.partyGroups.id, schema.partyGroupMembers.partyGroupId))
+          .where(
+            and(
+              ne(schema.partyGroupMembers.partyGroupId, id),
+              inArray(
+                schema.partyGroupMembers.value,
+                members.map((member) => member.value),
+              ),
+            ),
+          )
+          .limit(1)
+        const first = taken[0]
+        throw new PartyGroupConflictError(
+          first ? `${first.value} already belongs to ${first.owner}` : 'A PAN or card code already belongs to another party group',
+        )
+      }
+      throw error
+    }
+  }
+
+  async createPartyGroup(input: NewPartyGroup): Promise<PartyGroup> {
+    const id = newId('pty')
+    await this.writePartyGroup(id, input, true)
+    const created = await this.getPartyGroup(id)
+    if (!created) throw new Error('Party group was not saved')
+    return created
+  }
+
+  async updatePartyGroup(id: string, input: NewPartyGroup): Promise<PartyGroup | null> {
+    if (!(await this.writePartyGroup(id, input, false))) return null
+    return this.getPartyGroup(id)
+  }
+
+  async deletePartyGroup(id: string): Promise<boolean> {
+    const deleted = await this.db
+      .delete(schema.partyGroups)
+      .where(eq(schema.partyGroups.id, id))
+      .returning({ id: schema.partyGroups.id })
+    return deleted.length > 0
+  }
+
+  async getWaGroup(jid: string): Promise<WaGroup | null> {
+    const [row] = await this.db.select().from(schema.waGroups).where(eq(schema.waGroups.jid, jid)).limit(1)
+    return row ? toWaGroup(row) : null
+  }
+
+  async listWaGroups(): Promise<WaGroup[]> {
+    const rows = await this.db.select().from(schema.waGroups).orderBy(asc(schema.waGroups.subject), asc(schema.waGroups.jid))
+    return rows.map(toWaGroup)
+  }
+
+  async saveWaGroup(jid: string, patch: WaGroupPatch): Promise<WaGroup> {
+    const set: Partial<typeof schema.waGroups.$inferInsert> = { updatedAt: new Date() }
+    if (patch.subject !== undefined) set.subject = patch.subject
+    if (patch.partyGroupId !== undefined) set.partyGroupId = patch.partyGroupId
+    if (patch.sendSo !== undefined) set.sendSo = patch.sendSo
+    const [row] = await this.db
+      .insert(schema.waGroups)
+      .values({
+        jid,
+        subject: patch.subject ?? null,
+        partyGroupId: patch.partyGroupId ?? null,
+        sendSo: patch.sendSo ?? true,
+      })
+      .onConflictDoUpdate({ target: schema.waGroups.jid, set })
+      .returning()
+    return toWaGroup(row!)
+  }
+
+  async listCustomerSites(): Promise<CustomerSite[]> {
+    const rows = await this.db
+      .select()
+      .from(schema.customerSites)
+      .orderBy(asc(schema.customerSites.partyGroupId), asc(schema.customerSites.siteCode))
+    return rows.map((row) => ({ partyGroupId: row.partyGroupId, siteCode: row.siteCode, cardCode: row.cardCode, note: row.note }))
+  }
+
+  async listCustomerItemRefs(partyGroupId?: string): Promise<CustomerItemRef[]> {
+    const rows = await this.db
+      .select()
+      .from(schema.customerItemRefs)
+      .where(partyGroupId ? eq(schema.customerItemRefs.partyGroupId, partyGroupId) : undefined)
+      .orderBy(asc(schema.customerItemRefs.itemCode), asc(schema.customerItemRefs.id))
+    return rows.map((row) => ({
+      id: row.id,
+      partyGroupId: row.partyGroupId,
+      articleNo: row.articleNo,
+      ean: row.ean,
+      itemCode: row.itemCode,
+      buyerUom: row.buyerUom,
+      pcsPerUom: row.pcsPerUom,
+      lastPrice: row.lastPrice,
+      note: row.note,
+    }))
+  }
+
+  async listItemOwnerOverrides(): Promise<ItemOwnerOverride[]> {
+    const rows = await this.db.select().from(schema.itemOwnerOverrides).orderBy(asc(schema.itemOwnerOverrides.itemCode))
+    return rows.map((row) => ({
+      itemCode: row.itemCode,
+      owner: row.owner === 'customer' ? 'customer' : 'tierra',
+      ownerCardCode: row.ownerCardCode,
+      note: row.note,
+    }))
+  }
+
+  async listPartyAliases(): Promise<PartyAlias[]> {
+    return this.db.select().from(schema.partyAliases).orderBy(asc(schema.partyAliases.cardCode))
+  }
+
+  private async customerPosWhere(where: SQL, limit?: number): Promise<CustomerPo[]> {
+    let query = this.db
+      .select({ po: schema.customerPos, partyName: schema.partyGroups.name })
+      .from(schema.customerPos)
+      .leftJoin(schema.partyGroups, eq(schema.partyGroups.id, schema.customerPos.partyGroupId))
+      .where(where)
+      .orderBy(desc(schema.customerPos.createdAt), desc(schema.customerPos.id))
+      .$dynamic()
+    if (limit) query = query.limit(limit)
+    const rows = await query
+    if (rows.length === 0) return []
+    const lines = await this.db
+      .select()
+      .from(schema.customerPoLines)
+      .where(inArray(schema.customerPoLines.customerPoId, rows.map((row) => row.po.id)))
+      .orderBy(asc(schema.customerPoLines.lineNo))
+    return rows.map(({ po, partyName }) => ({
+      id: po.id,
+      partyGroupId: po.partyGroupId,
+      partyName,
+      poNo: po.poNo,
+      revision: po.revision,
+      status: po.status as CustomerPoStatus,
+      cardCode: po.cardCode,
+      siteCode: po.siteCode,
+      shipToGstin: po.shipToGstin,
+      shipToAddress: po.shipToAddress,
+      buyerName: po.buyerName,
+      vendorCode: po.vendorCode,
+      poDate: po.poDate,
+      deliveryDate: po.deliveryDate,
+      basicTotal: po.basicTotal,
+      taxTotal: po.taxTotal,
+      total: po.total,
+      notes: po.notes,
+      deliveryTerm: po.deliveryTerm,
+      paymentTerms: po.paymentTerms,
+      reader: po.reader,
+      resolution: po.resolution,
+      reviewReason: po.reviewReason,
+      repeatOf: po.repeatOf as RepeatHit[],
+      documentId: po.documentId,
+      sourceChat: po.sourceChat,
+      sourceMessageId: po.sourceMessageId,
+      sourceSender: po.sourceSender,
+      raisedBy: po.raisedBy,
+      createdAt: po.createdAt.toISOString(),
+      updatedAt: po.updatedAt.toISOString(),
+      lines: lines
+        .filter((line) => line.customerPoId === po.id)
+        .map(({ customerPoId: _id, ...line }) => line as CustomerPoLine),
+    }))
+  }
+
+  async createCustomerPo(input: NewCustomerPo): Promise<CustomerPo> {
+    const id = newId('cpo')
+    const { lines, revision, ...header } = input
+    try {
+      await this.db.transaction(async (tx) => {
+        await tx.insert(schema.customerPos).values({ ...header, id, revision: revision ?? 1 })
+        if (lines.length > 0) {
+          await tx.insert(schema.customerPoLines).values(lines.map((line) => ({ ...line, customerPoId: id })))
+        }
+      })
+    } catch (error) {
+      if (isUniqueViolation(error, 'customer_pos_live')) throw new CustomerPoRevisionTakenError(input.poNo, revision ?? 1)
+      throw error
+    }
+    const created = await this.getCustomerPo(id)
+    if (!created) throw new Error('Customer PO was not saved')
+    return created
+  }
+
+  async getCustomerPo(id: string): Promise<CustomerPo | null> {
+    const [po] = await this.customerPosWhere(eq(schema.customerPos.id, id))
+    return po ?? null
+  }
+
+  async findCustomerPoByMessage(messageId: string): Promise<CustomerPo | null> {
+    const [po] = await this.customerPosWhere(eq(schema.customerPos.sourceMessageId, messageId))
+    return po ?? null
+  }
+
+  async findCustomerPosByNumber(poNo: string): Promise<CustomerPo[]> {
+    return this.customerPosWhere(and(eq(schema.customerPos.poNo, poNo), ne(schema.customerPos.status, 'cancelled'))!)
+  }
+
+  async listCustomerPos(filter: { limit?: number; status?: string | null } = {}): Promise<CustomerPoSummary[]> {
+    const latest = this.db
+      .selectDistinctOn([schema.inventoryChecks.customerPoId], {
+        customerPoId: schema.inventoryChecks.customerPoId,
+        verdict: schema.inventoryChecks.verdict,
+      })
+      .from(schema.inventoryChecks)
+      .where(isNotNull(schema.inventoryChecks.customerPoId))
+      .orderBy(schema.inventoryChecks.customerPoId, desc(schema.inventoryChecks.createdAt))
+      .as('latest')
+    const lineCount = this.db
+      .select({ customerPoId: schema.customerPoLines.customerPoId, n: sql<number>`count(*)::int`.as('n') })
+      .from(schema.customerPoLines)
+      .groupBy(schema.customerPoLines.customerPoId)
+      .as('line_count')
+    const rows = await this.db
+      .select({
+        po: schema.customerPos,
+        partyName: schema.partyGroups.name,
+        verdict: latest.verdict,
+        lines: lineCount.n,
+      })
+      .from(schema.customerPos)
+      .leftJoin(schema.partyGroups, eq(schema.partyGroups.id, schema.customerPos.partyGroupId))
+      .leftJoin(latest, eq(latest.customerPoId, schema.customerPos.id))
+      .leftJoin(lineCount, eq(lineCount.customerPoId, schema.customerPos.id))
+      .where(filter.status ? eq(schema.customerPos.status, filter.status) : undefined)
+      .orderBy(desc(schema.customerPos.createdAt), desc(schema.customerPos.id))
+      .limit(filter.limit ?? 100)
+    return rows.map(({ po, partyName, verdict, lines }) => ({
+      id: po.id,
+      poNo: po.poNo,
+      revision: po.revision,
+      status: po.status as CustomerPoStatus,
+      partyGroupId: po.partyGroupId,
+      partyName,
+      cardCode: po.cardCode,
+      siteCode: po.siteCode,
+      poDate: po.poDate,
+      deliveryDate: po.deliveryDate,
+      total: po.total,
+      lineCount: lines ?? 0,
+      verdict: (verdict as CheckVerdict | null) ?? null,
+      repeat: po.repeatOf.length > 0,
+      reviewReason: po.reviewReason,
+      sourceChat: po.sourceChat,
+      createdAt: po.createdAt.toISOString(),
+    }))
+  }
+
+  async updateCustomerPo(id: string, patch: CustomerPoPatch): Promise<CustomerPo | null> {
+    const set: Partial<typeof schema.customerPos.$inferInsert> = { updatedAt: new Date() }
+    for (const [key, value] of Object.entries(patch)) {
+      if (value !== undefined) (set as Record<string, unknown>)[key] = value
+    }
+    const updated = await this.db
+      .update(schema.customerPos)
+      .set(set)
+      .where(eq(schema.customerPos.id, id))
+      .returning({ id: schema.customerPos.id })
+    return updated.length ? this.getCustomerPo(id) : null
+  }
+
+  async updateCustomerPoLines(id: string, lines: CustomerPoLine[]): Promise<CustomerPo | null> {
+    const found = await this.db.transaction(async (tx) => {
+      const updated = await tx
+        .update(schema.customerPos)
+        .set({ updatedAt: new Date() })
+        .where(eq(schema.customerPos.id, id))
+        .returning({ id: schema.customerPos.id })
+      if (!updated.length) return false
+      await tx.delete(schema.customerPoLines).where(eq(schema.customerPoLines.customerPoId, id))
+      if (lines.length > 0) await tx.insert(schema.customerPoLines).values(lines.map((line) => ({ ...line, customerPoId: id })))
+      return true
+    })
+    return found ? this.getCustomerPo(id) : null
+  }
+
+  async saveInventoryCheck(input: NewInventoryCheck): Promise<InventoryCheck> {
+    const id = newId('chk')
+    const { lines, ...header } = input
+    await this.db.transaction(async (tx) => {
+      await tx.insert(schema.inventoryChecks).values({ ...header, id })
+      if (lines.length > 0) {
+        await tx
+          .insert(schema.inventoryCheckLines)
+          .values(lines.map((line, index) => ({ ...line, checkId: id, lineNo: index + 1 })))
+      }
+    })
+    const saved = await this.getInventoryCheck(id)
+    if (!saved) throw new Error('Inventory check was not saved')
+    return saved
+  }
+
+  private async checkWhere(where: SQL): Promise<InventoryCheck | null> {
+    const [check] = await this.db
+      .select()
+      .from(schema.inventoryChecks)
+      .where(where)
+      .orderBy(desc(schema.inventoryChecks.createdAt), desc(schema.inventoryChecks.id))
+      .limit(1)
+    if (!check) return null
+    const lines = await this.db
+      .select()
+      .from(schema.inventoryCheckLines)
+      .where(eq(schema.inventoryCheckLines.checkId, check.id))
+      .orderBy(asc(schema.inventoryCheckLines.lineNo))
+    return {
+      id: check.id,
+      customerPoId: check.customerPoId,
+      kind: check.kind === 'dry_run' ? 'dry_run' : 'po',
+      verdict: check.verdict as CheckVerdict,
+      dataAsOf: check.dataAsOf,
+      warnings: check.warnings,
+      requested: check.requested as NewInventoryCheck['requested'],
+      createdBy: check.createdBy,
+      createdAt: check.createdAt.toISOString(),
+      lines: lines.map(({ checkId: _checkId, lineNo: _lineNo, ...line }) => line as InventoryCheckLine),
+    }
+  }
+
+  async getInventoryCheck(id: string): Promise<InventoryCheck | null> {
+    return this.checkWhere(eq(schema.inventoryChecks.id, id))
+  }
+
+  async latestInventoryCheck(customerPoId: string): Promise<InventoryCheck | null> {
+    return this.checkWhere(eq(schema.inventoryChecks.customerPoId, customerPoId))
+  }
+
+  async stockOverlays(itemCodes: readonly string[]): Promise<Record<string, StockOverlay>> {
+    if (itemCodes.length === 0) return {}
+    const codes = [...itemCodes]
+    const reserving = [...RESERVING_SO_STATUSES]
+    const [fg, components, adjustments] = await Promise.all([
+      this.db
+        .select({ itemCode: schema.salesOrderLines.itemCode, qty: sql<string>`sum(${schema.salesOrderLines.reservedPcs})` })
+        .from(schema.salesOrderLines)
+        .innerJoin(schema.salesOrders, eq(schema.salesOrders.id, schema.salesOrderLines.salesOrderId))
+        .where(and(inArray(schema.salesOrders.status, reserving), inArray(schema.salesOrderLines.itemCode, codes)))
+        .groupBy(schema.salesOrderLines.itemCode),
+      this.db
+        .select({ itemCode: schema.inventoryCheckLines.itemCode, qty: sql<string>`sum(${schema.inventoryCheckLines.need})` })
+        .from(schema.inventoryCheckLines)
+        .innerJoin(schema.salesOrders, eq(schema.salesOrders.checkId, schema.inventoryCheckLines.checkId))
+        .where(
+          and(
+            inArray(schema.salesOrders.status, reserving),
+            eq(schema.inventoryCheckLines.kind, 'component'),
+            inArray(schema.inventoryCheckLines.itemCode, codes),
+          ),
+        )
+        .groupBy(schema.inventoryCheckLines.itemCode),
+      this.db
+        .select({ itemCode: schema.stockAdjustments.itemCode, qty: sql<string>`sum(${schema.stockAdjustments.qty})` })
+        .from(schema.stockAdjustments)
+        .where(and(eq(schema.stockAdjustments.status, 'active'), inArray(schema.stockAdjustments.itemCode, codes)))
+        .groupBy(schema.stockAdjustments.itemCode),
+    ])
+    const out: Record<string, StockOverlay> = {}
+    const entry = (code: string) => (out[code] ??= { reserved: 0, adjustments: 0 })
+    for (const row of [...fg, ...components]) entry(row.itemCode).reserved += Number(row.qty)
+    for (const row of adjustments) entry(row.itemCode).adjustments += Number(row.qty)
+    return out
+  }
+
+  // ------------------------------------------------------------------------------------------ P4: sales orders
+
+  private async salesOrdersWhere(where: SQL | undefined, limit?: number): Promise<SalesOrder[]> {
+    let query = this.db
+      .select({ so: schema.salesOrders, partyName: schema.partyGroups.name })
+      .from(schema.salesOrders)
+      .leftJoin(schema.partyGroups, eq(schema.partyGroups.id, schema.salesOrders.partyGroupId))
+      .where(where)
+      .orderBy(desc(schema.salesOrders.createdAt), desc(schema.salesOrders.id))
+      .$dynamic()
+    if (limit) query = query.limit(limit)
+    const rows = await query
+    if (rows.length === 0) return []
+    const lines = await this.db
+      .select()
+      .from(schema.salesOrderLines)
+      .where(inArray(schema.salesOrderLines.salesOrderId, rows.map((row) => row.so.id)))
+      .orderBy(asc(schema.salesOrderLines.lineNo))
+    return rows.map(({ so, partyName }) => ({
+      id: so.id,
+      docNo: so.docNo,
+      series: so.series,
+      fy: so.fy,
+      seq: so.seq,
+      version: so.version,
+      customerPoId: so.customerPoId,
+      partyGroupId: so.partyGroupId,
+      partyName,
+      cardCode: so.cardCode,
+      checkId: so.checkId,
+      status: so.status as SalesOrderStatus,
+      docDate: so.docDate,
+      deliveryDate: so.deliveryDate,
+      customerPoNo: so.customerPoNo,
+      poDate: so.poDate,
+      vendorCode: so.vendorCode,
+      siteCode: so.siteCode,
+      shipToGstin: so.shipToGstin,
+      placeOfSupply: so.placeOfSupply,
+      stateCode: so.stateCode,
+      taxKind: so.taxKind === 'igst' ? 'igst' : 'cgst_sgst',
+      basicTotal: so.basicTotal,
+      cgst: so.cgst,
+      sgst: so.sgst,
+      igst: so.igst,
+      cess: so.cess,
+      taxTotal: so.taxTotal,
+      total: so.total,
+      deliveryTerm: so.deliveryTerm,
+      paymentTerms: so.paymentTerms,
+      notes: so.notes,
+      createdBy: so.createdBy,
+      approvedBy: so.approvedBy,
+      approvedAt: so.approvedAt?.toISOString() ?? null,
+      sentAt: so.sentAt?.toISOString() ?? null,
+      sapDocEntry: so.sapDocEntry,
+      sapDocNo: so.sapDocNo,
+      cancelledAt: so.cancelledAt?.toISOString() ?? null,
+      createdAt: so.createdAt.toISOString(),
+      updatedAt: so.updatedAt.toISOString(),
+      lines: lines
+        .filter((line) => line.salesOrderId === so.id)
+        .map(({ salesOrderId: _id, ...line }) => line as SalesOrderLine),
+    }))
+  }
+
+  async createSalesOrder(
+    input: NewSalesOrder,
+    numbering: { series: string; fy: string },
+  ): Promise<{ order: SalesOrder; created: boolean }> {
+    const live = input.customerPoId ? await this.findSalesOrderForPo(input.customerPoId) : null
+    if (live) return { order: live, created: false }
+    const id = newId('tso')
+    const { lines, ...header } = input
+    try {
+      await this.db.transaction(async (tx) => {
+        const [counter] = await tx
+          .insert(schema.docCounters)
+          .values({ series: numbering.series, fy: numbering.fy, next: 2 })
+          .onConflictDoUpdate({
+            target: [schema.docCounters.series, schema.docCounters.fy],
+            set: { next: sql`${schema.docCounters.next} + 1`, updatedAt: new Date() },
+          })
+          .returning({ next: schema.docCounters.next })
+        const seq = counter!.next - 1
+        const docNo = `${numbering.series}/${numbering.fy}/${String(seq).padStart(4, '0')}`
+        await tx.insert(schema.salesOrders).values({ ...header, id, docNo, series: numbering.series, fy: numbering.fy, seq })
+        if (lines.length > 0) {
+          await tx.insert(schema.salesOrderLines).values(lines.map((line) => ({ ...line, salesOrderId: id })))
+        }
+      })
+    } catch (error) {
+      if (isUniqueViolation(error, 'sales_orders_live_po') && input.customerPoId) {
+        const existing = await this.findSalesOrderForPo(input.customerPoId)
+        if (existing) return { order: existing, created: false }
+      }
+      throw error
+    }
+    const order = await this.getSalesOrder(id)
+    if (!order) throw new Error('Sales order was not saved')
+    return { order, created: true }
+  }
+
+  async getSalesOrder(id: string): Promise<SalesOrder | null> {
+    const [order] = await this.salesOrdersWhere(eq(schema.salesOrders.id, id))
+    return order ?? null
+  }
+
+  async findSalesOrderByNo(docNo: string): Promise<SalesOrder | null> {
+    const [order] = await this.salesOrdersWhere(eq(schema.salesOrders.docNo, docNo.toUpperCase()))
+    return order ?? null
+  }
+
+  async findSalesOrderForPo(customerPoId: string): Promise<SalesOrder | null> {
+    const [order] = await this.salesOrdersWhere(
+      and(
+        eq(schema.salesOrders.customerPoId, customerPoId),
+        sql`${schema.salesOrders.status} not in ('cancelled', 'rejected')`,
+      ),
+    )
+    return order ?? null
+  }
+
+  async listSalesOrders(filter: { status?: SalesOrderStatus | null; limit?: number } = {}): Promise<SalesOrder[]> {
+    return this.salesOrdersWhere(filter.status ? eq(schema.salesOrders.status, filter.status) : undefined, filter.limit ?? 200)
+  }
+
+  async updateSalesOrder(id: string, patch: SalesOrderPatch, from?: readonly SalesOrderStatus[]): Promise<SalesOrder | null> {
+    const set: Partial<typeof schema.salesOrders.$inferInsert> = { updatedAt: new Date() }
+    if (patch.status !== undefined) set.status = patch.status
+    if (patch.version !== undefined) set.version = patch.version
+    if (patch.approvedBy !== undefined) set.approvedBy = patch.approvedBy
+    if (patch.approvedAt !== undefined) set.approvedAt = patch.approvedAt ? new Date(patch.approvedAt) : null
+    if (patch.sentAt !== undefined) set.sentAt = patch.sentAt ? new Date(patch.sentAt) : null
+    if (patch.sapDocEntry !== undefined) set.sapDocEntry = patch.sapDocEntry
+    if (patch.sapDocNo !== undefined) set.sapDocNo = patch.sapDocNo
+    if (patch.cancelledAt !== undefined) set.cancelledAt = patch.cancelledAt ? new Date(patch.cancelledAt) : null
+    const updated = await this.db
+      .update(schema.salesOrders)
+      .set(set)
+      .where(and(eq(schema.salesOrders.id, id), from ? inArray(schema.salesOrders.status, [...from]) : undefined))
+      .returning({ id: schema.salesOrders.id })
+    return updated.length ? this.getSalesOrder(id) : null
+  }
+
+  private async approvalsWhere(where: SQL | undefined, limit = 200): Promise<Approval[]> {
+    const rows = await this.db
+      .select({ approval: schema.approvals, decidedByName: schema.users.name })
+      .from(schema.approvals)
+      .leftJoin(schema.users, eq(schema.users.id, schema.approvals.decidedBy))
+      .where(where)
+      .orderBy(desc(schema.approvals.createdAt), desc(schema.approvals.id))
+      .limit(limit)
+    return rows.map(({ approval, decidedByName }) => ({
+      id: approval.id,
+      subjectType: approval.subjectType,
+      subjectId: approval.subjectId,
+      version: approval.version,
+      approverRole: asRole(approval.approverRole),
+      status: approval.status as ApprovalStatus,
+      channel: (approval.channel as Approval['channel']) ?? null,
+      via: (approval.via as Approval['via']) ?? null,
+      decidedBy: approval.decidedBy,
+      decidedByName,
+      decidedAt: approval.decidedAt?.toISOString() ?? null,
+      note: approval.note,
+      selfRaised: approval.selfRaised,
+      raisedBy: approval.raisedBy,
+      waMessageIds: approval.waMessageIds,
+      taskId: approval.taskId,
+      soPdfId: approval.soPdfId,
+      annexId: approval.annexId,
+      createdAt: approval.createdAt.toISOString(),
+      updatedAt: approval.updatedAt.toISOString(),
+    }))
+  }
+
+  async createApproval(input: NewApproval): Promise<Approval> {
+    const id = newId('apr')
+    await this.db
+      .insert(schema.approvals)
+      .values({
+        id,
+        subjectType: input.subjectType,
+        subjectId: input.subjectId,
+        version: input.version,
+        approverRole: input.approverRole,
+        selfRaised: input.selfRaised,
+        raisedBy: input.raisedBy,
+        soPdfId: input.soPdfId ?? null,
+        annexId: input.annexId ?? null,
+      })
+      .onConflictDoNothing({ target: [schema.approvals.subjectType, schema.approvals.subjectId, schema.approvals.version] })
+    const [approval] = await this.approvalsWhere(
+      and(
+        eq(schema.approvals.subjectType, input.subjectType),
+        eq(schema.approvals.subjectId, input.subjectId),
+        eq(schema.approvals.version, input.version),
+      ),
+    )
+    if (!approval) throw new Error('Approval was not saved')
+    return approval
+  }
+
+  async getApproval(id: string): Promise<Approval | null> {
+    const [approval] = await this.approvalsWhere(eq(schema.approvals.id, id))
+    return approval ?? null
+  }
+
+  async listApprovals(
+    filter: { status?: ApprovalStatus | null; subjectType?: string; subjectId?: string; limit?: number } = {},
+  ): Promise<Approval[]> {
+    return this.approvalsWhere(
+      and(
+        filter.status ? eq(schema.approvals.status, filter.status) : undefined,
+        filter.subjectType ? eq(schema.approvals.subjectType, filter.subjectType) : undefined,
+        filter.subjectId ? eq(schema.approvals.subjectId, filter.subjectId) : undefined,
+      ),
+      filter.limit ?? 200,
+    )
+  }
+
+  async findApprovalByMessage(waMessageId: string): Promise<Approval | null> {
+    const [approval] = await this.approvalsWhere(
+      sql`${schema.approvals.waMessageIds} @> ${JSON.stringify([waMessageId])}::jsonb`,
+    )
+    return approval ?? null
+  }
+
+  private approvalSet(patch: ApprovalPatch): Partial<typeof schema.approvals.$inferInsert> {
+    const set: Partial<typeof schema.approvals.$inferInsert> = { updatedAt: new Date() }
+    for (const [key, value] of Object.entries(patch)) {
+      if (value === undefined) continue
+      ;(set as Record<string, unknown>)[key] = key === 'decidedAt' && value ? new Date(value as string) : value
+    }
+    return set
+  }
+
+  async transitionApproval(id: string, version: number, from: ApprovalStatus, patch: ApprovalPatch): Promise<Approval | null> {
+    const updated = await this.db
+      .update(schema.approvals)
+      .set(this.approvalSet(patch))
+      .where(and(eq(schema.approvals.id, id), eq(schema.approvals.version, version), eq(schema.approvals.status, from)))
+      .returning({ id: schema.approvals.id })
+    return updated.length ? this.getApproval(id) : null
+  }
+
+  async updateApproval(
+    id: string,
+    patch: Pick<ApprovalPatch, 'waMessageIds' | 'taskId' | 'soPdfId' | 'annexId'>,
+  ): Promise<Approval | null> {
+    const updated = await this.db
+      .update(schema.approvals)
+      .set(this.approvalSet(patch))
+      .where(eq(schema.approvals.id, id))
+      .returning({ id: schema.approvals.id })
+    return updated.length ? this.getApproval(id) : null
+  }
+
+  private toRequest(row: typeof schema.procurementRequests.$inferSelect): ProcurementRequest {
+    return {
+      id: row.id,
+      subjectType: row.subjectType,
+      subjectId: row.subjectId,
+      customerPoId: row.customerPoId,
+      salesOrderId: row.salesOrderId,
+      itemCode: row.itemCode,
+      itemName: row.itemName,
+      qty: row.qty,
+      uom: row.uom,
+      reason: row.reason as ProcurementRequest['reason'],
+      status: row.status as ProcurementStatus,
+      taskId: row.taskId,
+      note: row.note,
+      createdAt: row.createdAt.toISOString(),
+    }
+  }
+
+  async createProcurementRequests(rows: NewProcurementRequest[]): Promise<ProcurementRequest[]> {
+    if (rows.length === 0) return []
+    await this.db
+      .insert(schema.procurementRequests)
+      .values(rows.map((row) => ({ ...row, id: newId('prq') })))
+      .onConflictDoNothing({
+        target: [schema.procurementRequests.subjectId, schema.procurementRequests.itemCode, schema.procurementRequests.reason],
+      })
+    return this.listProcurementRequests({ subjectId: rows[0]!.subjectId })
+  }
+
+  async listProcurementRequests(
+    filter: { subjectId?: string; status?: ProcurementStatus | null; limit?: number } = {},
+  ): Promise<ProcurementRequest[]> {
+    const rows = await this.db
+      .select()
+      .from(schema.procurementRequests)
+      .where(
+        and(
+          filter.subjectId ? eq(schema.procurementRequests.subjectId, filter.subjectId) : undefined,
+          filter.status ? eq(schema.procurementRequests.status, filter.status) : undefined,
+        ),
+      )
+      .orderBy(desc(schema.procurementRequests.createdAt), asc(schema.procurementRequests.itemCode))
+      .limit(filter.limit ?? 500)
+    return rows.map((row) => this.toRequest(row))
+  }
+
+  async closeProcurementRequests(subjectId: string, status: ProcurementStatus, reason?: string): Promise<number> {
+    const updated = await this.db
+      .update(schema.procurementRequests)
+      .set({ status, updatedAt: new Date() })
+      .where(
+        and(
+          eq(schema.procurementRequests.subjectId, subjectId),
+          eq(schema.procurementRequests.status, 'open'),
+          reason ? eq(schema.procurementRequests.reason, reason) : undefined,
+        ),
+      )
+      .returning({ id: schema.procurementRequests.id })
+    return updated.length
+  }
+
+  async createStockAdjustment(input: NewStockAdjustment): Promise<StockAdjustment> {
+    const id = newId('adj')
+    await this.db.insert(schema.stockAdjustments).values({ ...input, id })
+    const [row] = await this.listStockAdjustmentsWhere(eq(schema.stockAdjustments.id, id), 1)
+    if (!row) throw new Error('Stock adjustment was not saved')
+    return row
+  }
+
+  private async listStockAdjustmentsWhere(where: SQL | undefined, limit: number): Promise<StockAdjustment[]> {
+    const rows = await this.db
+      .select({ adj: schema.stockAdjustments, name: schema.users.name })
+      .from(schema.stockAdjustments)
+      .leftJoin(schema.users, eq(schema.users.id, schema.stockAdjustments.createdBy))
+      .where(where)
+      .orderBy(desc(schema.stockAdjustments.createdAt), desc(schema.stockAdjustments.id))
+      .limit(limit)
+    return rows.map(({ adj, name }) => ({
+      id: adj.id,
+      itemCode: adj.itemCode,
+      qty: adj.qty,
+      uom: adj.uom,
+      reason: adj.reason,
+      note: adj.note,
+      taskId: adj.taskId,
+      createdBy: adj.createdBy,
+      createdByName: name,
+      createdVia: asTaskVia(adj.createdVia),
+      status: adj.status as StockAdjustment['status'],
+      effectiveAt: adj.effectiveAt.toISOString(),
+      createdAt: adj.createdAt.toISOString(),
+      closedAt: adj.closedAt?.toISOString() ?? null,
+      closedNote: adj.closedNote,
+    }))
+  }
+
+  async getStockAdjustment(id: string): Promise<StockAdjustment | null> {
+    const [row] = await this.listStockAdjustmentsWhere(eq(schema.stockAdjustments.id, id), 1)
+    return row ?? null
+  }
+
+  async closeStockAdjustment(id: string, status: 'absorbed' | 'cancelled', note: string, at: Date): Promise<StockAdjustment | null> {
+    const updated = await this.db
+      .update(schema.stockAdjustments)
+      .set({ status, closedAt: at, closedNote: note })
+      .where(and(eq(schema.stockAdjustments.id, id), eq(schema.stockAdjustments.status, 'active')))
+      .returning({ id: schema.stockAdjustments.id })
+    return updated.length ? this.getStockAdjustment(id) : null
+  }
+
+  async listStockAdjustments(filter: { status?: StockAdjustment['status'] | null; limit?: number } = {}): Promise<StockAdjustment[]> {
+    return this.listStockAdjustmentsWhere(
+      filter.status ? eq(schema.stockAdjustments.status, filter.status) : undefined,
+      filter.limit ?? 200,
+    )
+  }
+
+  async listDocuments(subjectType: string, subjectId: string): Promise<DocumentInfo[]> {
+    const rows = await this.db
+      .select({
+        id: schema.orderDocuments.id,
+        filename: schema.orderDocuments.filename,
+        kind: schema.orderDocuments.kind,
+        subjectType: schema.orderDocuments.subjectType,
+        subjectId: schema.orderDocuments.subjectId,
+        version: schema.orderDocuments.version,
+        createdAt: schema.orderDocuments.createdAt,
+      })
+      .from(schema.orderDocuments)
+      .where(and(eq(schema.orderDocuments.subjectType, subjectType), eq(schema.orderDocuments.subjectId, subjectId)))
+      .orderBy(desc(schema.orderDocuments.version), desc(schema.orderDocuments.createdAt))
+    return rows.map((row) => ({ ...row, kind: row.kind as DocumentInfo['kind'], createdAt: row.createdAt.toISOString() }))
+  }
+
+  private async outboundByKey(idempotencyKey: string): Promise<OutboundRow | null> {
+    const [row] = await this.db
+      .select()
+      .from(schema.whatsappMessages)
+      .where(eq(schema.whatsappMessages.idempotencyKey, idempotencyKey))
+      .limit(1)
+    if (!row) return null
+    return {
+      idempotencyKey,
+      evolutionMessageId: row.evolutionMessageId,
+      status: (row.status as OutboundRow['status']) ?? null,
+      remoteJid: row.remoteJid,
+      createdAt: row.createdAt.toISOString(),
+    }
+  }
+
+  async reserveOutbound(message: ClaimedMessage & { idempotencyKey: string; at?: Date }): Promise<OutboundRow | null> {
+    const inserted = await this.db
+      .insert(schema.whatsappMessages)
+      .values({
+        id: newId('msg'),
+        evolutionMessageId: `outbound:${message.idempotencyKey}`,
+        remoteJid: message.remoteJid,
+        fromMe: true,
+        hasPdf: message.hasPdf,
+        body: message.body,
+        kind: message.kind ?? 'text',
+        purpose: message.purpose ?? null,
+        subjectType: message.subjectType ?? null,
+        subjectId: message.subjectId ?? null,
+        status: 'sending',
+        idempotencyKey: message.idempotencyKey,
+        ...(message.at ? { createdAt: message.at } : {}),
+      })
+      .onConflictDoNothing()
+      .returning({ id: schema.whatsappMessages.id })
+    if (inserted.length > 0) return null
+    const existing = await this.outboundByKey(message.idempotencyKey)
+    if (!existing) throw new Error(`Outbound ${message.idempotencyKey} could not be reserved`)
+    return existing
+  }
+
+  async completeOutbound(idempotencyKey: string, evolutionMessageId: string | null): Promise<void> {
+    await this.db
+      .update(schema.whatsappMessages)
+      .set({
+        status: 'sent',
+        ...(evolutionMessageId ? { evolutionMessageId } : {}),
+      })
+      .where(eq(schema.whatsappMessages.idempotencyKey, idempotencyKey))
+  }
+
+  async setOutboundStatus(idempotencyKey: string, status: 'uncertain' | 'failed'): Promise<void> {
+    await this.db
+      .update(schema.whatsappMessages)
+      .set({ status })
+      .where(eq(schema.whatsappMessages.idempotencyKey, idempotencyKey))
+  }
+
+  async findOutbound(idempotencyKey: string): Promise<OutboundRow | null> {
+    return this.outboundByKey(idempotencyKey)
+  }
+
   async enqueueJob(job: NewJob): Promise<JobRecord | null> {
     const [row] = await this.db
       .insert(schema.jobs)
@@ -994,7 +1652,19 @@ export class DrizzleStore implements Store {
       this.db
         .select({ id: schema.jobs.id })
         .from(schema.jobs)
-        .where(and(eq(schema.jobs.status, 'queued'), lte(schema.jobs.runAfter, now)))
+        .where(
+          and(
+            eq(schema.jobs.status, 'queued'),
+            lte(schema.jobs.runAfter, now),
+            // a chat's turns one at a time, oldest first: never while another turn of that chat runs or waits ahead
+            sql`(${schema.jobs.kind} <> 'wa.incoming' or not exists (
+              select 1 from jobs other
+              where other.kind = 'wa.incoming' and other.id <> ${schema.jobs.id}
+                and other.payload->'message'->>'remoteJid' = ${schema.jobs.payload}->'message'->>'remoteJid'
+                and (other.status = 'running'
+                     or (other.status = 'queued' and (other.created_at, other.id) < (${schema.jobs.createdAt}, ${schema.jobs.id})))))`,
+          ),
+        )
         .orderBy(asc(schema.jobs.runAfter), asc(schema.jobs.createdAt))
         .limit(limit)
         .for('update', { skipLocked: true }),
@@ -1061,5 +1731,114 @@ export class DrizzleStore implements Store {
   async getJob(id: string): Promise<JobRecord | null> {
     const [row] = await this.db.select().from(schema.jobs).where(eq(schema.jobs.id, id)).limit(1)
     return row ? toJob(row) : null
+  }
+
+  async findJobByKey(idempotencyKey: string): Promise<JobRecord | null> {
+    const [row] = await this.db.select().from(schema.jobs).where(eq(schema.jobs.idempotencyKey, idempotencyKey)).limit(1)
+    return row ? toJob(row) : null
+  }
+
+  async cancelQueuedJobs(kind: string, payload: Record<string, string>): Promise<number> {
+    const cancelled = await this.db
+      .update(schema.jobs)
+      .set({ status: 'cancelled', updatedAt: new Date() })
+      .where(
+        and(
+          eq(schema.jobs.kind, kind),
+          eq(schema.jobs.status, 'queued'),
+          sql`${schema.jobs.payload} @> ${JSON.stringify(payload)}::jsonb`,
+        ),
+      )
+      .returning({ id: schema.jobs.id })
+    return cancelled.length
+  }
+
+  async listGlLabels(): Promise<GlLabel[]> {
+    const rows = await this.db.select().from(schema.glLabels).orderBy(asc(schema.glLabels.glCode))
+    return rows.map((row) => ({ glCode: row.glCode, label: row.label, preferPayee: row.preferPayee }))
+  }
+
+  async listBankLineReattributions(): Promise<BankLineReattribution[]> {
+    const rows = await this.db
+      .select()
+      .from(schema.bankLineReattributions)
+      .orderBy(asc(schema.bankLineReattributions.transId), asc(schema.bankLineReattributions.lineId))
+    return rows.map((row) => ({ transId: row.transId, lineId: row.lineId, reportDate: row.reportDate, note: row.note }))
+  }
+
+  async getDailyInputs(reportDate: string): Promise<DailyReportInputs | null> {
+    const [row] = await this.db
+      .select({ inputs: schema.dailyReportInputs, name: schema.users.name })
+      .from(schema.dailyReportInputs)
+      .leftJoin(schema.users, eq(schema.users.id, schema.dailyReportInputs.enteredBy))
+      .where(eq(schema.dailyReportInputs.reportDate, reportDate))
+      .limit(1)
+    return row ? toDailyInputs(row.inputs, row.name) : null
+  }
+
+  async saveDailyInputs(reportDate: string, patch: DailyInputsPatch, by: { userId: string | null; at: Date }): Promise<DailyReportInputs> {
+    const set: Partial<typeof schema.dailyReportInputs.$inferInsert> = { enteredBy: by.userId, enteredAt: by.at }
+    if (patch.productionRun !== undefined) set.productionRun = patch.productionRun
+    if (patch.packingRun !== undefined) set.packingRun = patch.packingRun
+    if (patch.cartoningRun !== undefined) set.cartoningRun = patch.cartoningRun
+    if (patch.manpower !== undefined) set.manpower = patch.manpower
+    if (patch.bananaKgEstimate !== undefined) set.bananaKgEstimate = patch.bananaKgEstimate
+    if (patch.cassavaKgEstimate !== undefined) set.cassavaKgEstimate = patch.cassavaKgEstimate
+    if (patch.inwardRemarks !== undefined) set.inwardRemarks = patch.inwardRemarks
+    if (patch.notes !== undefined) set.notes = patch.notes
+    await this.db
+      .insert(schema.dailyReportInputs)
+      .values({ reportDate, ...set })
+      .onConflictDoUpdate({ target: schema.dailyReportInputs.reportDate, set })
+    const saved = await this.getDailyInputs(reportDate)
+    if (!saved) throw new Error(`Daily inputs for ${reportDate} were not saved`)
+    return saved
+  }
+
+  async createDailyReport(input: NewDailyReport): Promise<DailyReportRecord> {
+    // the next version of the day; a concurrent insert of the same version hits the unique index and retries
+    for (let attempt = 0; ; attempt += 1) {
+      try {
+        const [row] = await this.db
+          .insert(schema.dailyReports)
+          .values({
+            id: newId('dr'),
+            reportDate: input.reportDate,
+            version: sql`(select coalesce(max(${schema.dailyReports.version}), 0) + 1 from ${schema.dailyReports} where ${schema.dailyReports.reportDate} = ${input.reportDate})`,
+            basis: input.basis,
+            dataAsOf: input.dataAsOf,
+            payload: input.payload,
+            documentId: input.documentId,
+            generatedBy: input.generatedBy,
+          })
+          .returning()
+        return toDailyReport(row!)
+      } catch (error) {
+        if (attempt < 3 && isUniqueViolation(error, 'daily_reports_date_version')) continue
+        throw error
+      }
+    }
+  }
+
+  async latestDailyReport(reportDate: string): Promise<DailyReportRecord | null> {
+    const [row] = await this.db
+      .select()
+      .from(schema.dailyReports)
+      .where(eq(schema.dailyReports.reportDate, reportDate))
+      .orderBy(desc(schema.dailyReports.version))
+      .limit(1)
+    return row ? toDailyReport(row) : null
+  }
+
+  async getSetting(key: string): Promise<unknown> {
+    const [row] = await this.db.select({ value: schema.appSettings.value }).from(schema.appSettings).where(eq(schema.appSettings.key, key)).limit(1)
+    return row ? row.value : null
+  }
+
+  async saveSetting(key: string, value: unknown, by: string | null): Promise<void> {
+    await this.db
+      .insert(schema.appSettings)
+      .values({ key, value, updatedBy: by, updatedAt: new Date() })
+      .onConflictDoUpdate({ target: schema.appSettings.key, set: { value, updatedBy: by, updatedAt: new Date() } })
   }
 }

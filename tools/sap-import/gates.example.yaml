@@ -1,0 +1,45 @@
+# Template for the local gates file (default ~/tierra-data/gates.local.yaml, or --gates PATH / SAP_GATES).
+# The real file holds expected figures of one SAP backup: business data, so it stays outside the repo.
+# Every value below is made up. Leave a section out to skip that gate.
+
+bank_closings:            # GL balance (sum of JDT1 debit - credit) up to as_of, per bank account
+  as_of: 2000-01-31
+  tolerance: 1
+  accounts:
+    - {account: _SYS00000000001, label: Bank A, expected: 12345}
+    - {account: _SYS00000000002, label: Bank B, expected: 67890}
+
+golden_trace:             # sales order -> invoice based on it -> e-way bill on that invoice (DocEntry keys)
+  so_doc_entry: 1
+  invoice_doc_entry: 2
+  ewb_no: "100000000001"
+
+production_order:         # goods issued vs received against one closed production order
+  doc_num: 1
+  item_code: FGEXAMPLE100
+  issued: 1000
+  received: 1000
+  tolerance: 10
+
+placeholder_boms: {min: 1, max: 100}   # expected count of BOMs flagged is_placeholder
+
+# verify only: each sql's first row must equal expect (numbers within 0.005)
+spot_checks:
+  - name: example stock row
+    sql: SELECT on_hand, committed, free FROM erp.stock WHERE item_code = 'FGEXAMPLE100' AND whs_code = 'WH01'
+    expect: [10, 4, 6]
+  - name: example sales order
+    sql: SELECT card_code, customer_po_no FROM erp.sales_orders WHERE doc_no = 'SO/00-01/1'
+    expect: [C9999, "PO-0001"]
+
+# `run.py hr`: checks run against the new hr schema before it is swapped in ({s} = the schema being checked).
+# Made-up figures; the real ones live in ~/tierra-data/gates.local.yaml.
+hr_checks:
+  - name: Voyon payroll headcount and net for one month
+    sql: SELECT count(*), sum(net) FROM {s}.payroll_lines WHERE run_id = 'voyon-2026-02'
+    expect: [3, 60259]
+  - name: attendance codes P / LWP for one month
+    sql: >-
+      SELECT count(*) FILTER (WHERE code = 'P'), count(*) FILTER (WHERE code = 'LWP') FROM {s}.attendance_days
+      WHERE work_date BETWEEN '2026-02-01' AND '2026-02-28'
+    expect: [5, 1]

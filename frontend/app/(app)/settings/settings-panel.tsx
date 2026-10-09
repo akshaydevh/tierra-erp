@@ -3,6 +3,7 @@
 import { useRouter } from 'next/navigation'
 import { useCallback, useEffect, useState } from 'react'
 import { ROLES, roleLabel, type AccountLink, type Me, type Role, type WhatsappConnection } from '@/lib/types'
+import { GroupsPanel } from './groups-panel'
 
 function statusLabel(status: WhatsappConnection['status']): string {
   if (status === 'connected') return 'Connected'
@@ -290,6 +291,7 @@ export function SettingsPanel({ me }: { me: Me }) {
       </article>
     </section>
     <Relations me={me} canManage={canManage} />
+    <GroupsPanel me={me} />
     </>
   )
 }
