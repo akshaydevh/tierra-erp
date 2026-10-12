@@ -360,3 +360,44 @@ SELECT j.transid AS trans_id,
 FROM sap.jdt1 j
 LEFT JOIN sap.oact a ON a.acctcode = j.account
 LEFT JOIN sap.ocrd c ON c.cardcode = j.shortname;
+
+-- Profit and loss accounts: every postable revenue (GroupMask 4) or expenditure (5) account, with its heading (the
+-- level-3 account above it: Sales of Products, Purchases, Inventory Variance, Factory Overheads, Employee Benefit
+-- Expenses ...; the account itself when it hangs higher up). FormatCode's first digit stands in for a missing GroupMask.
+CREATE VIEW erp.pnl_accounts AS
+WITH RECURSIVE up AS (
+  SELECT a.acctcode AS gl_code, a.acctname, a.fathernum, a.levels
+  FROM sap.oact a WHERE a.postable = 'Y'
+  UNION ALL
+  SELECT up.gl_code, f.acctname, f.fathernum, f.levels
+  FROM up JOIN sap.oact f ON f.acctcode = up.fathernum
+  WHERE up.levels > 3
+),
+heads AS (
+  SELECT DISTINCT ON (gl_code) gl_code, acctname AS heading
+  FROM up WHERE levels <= 3 ORDER BY gl_code, levels DESC
+),
+a AS (
+  SELECT acctcode, acctname, coalesce(groupmask::text, left(formatcode, 1)) AS grp
+  FROM sap.oact WHERE postable = 'Y'
+)
+SELECT a.acctcode AS gl_code,
+       btrim(regexp_replace(a.acctname, '\s*\(TRA\)\s*$', '')) AS account_name,
+       CASE a.grp WHEN '4' THEN 'income' ELSE 'expense' END AS side,
+       btrim(regexp_replace(coalesce(h.heading, a.acctname), '\s*\(TRA\)\s*$', '')) AS heading
+FROM a LEFT JOIN heads h ON h.gl_code = a.acctcode
+WHERE a.grp IN ('4', '5');
+
+-- Profit and loss by month (RefDate) and heading. amount: income on revenue accounts (credit - debit), cost on
+-- expenditure accounts (debit - credit). Period-end closing entries (TransType -3) move the year's result into equity
+-- and are left out, or every March would net to nothing.
+CREATE VIEW erp.pnl_monthly AS
+SELECT date_trunc('month', j.refdate)::date AS month,
+       a.side,
+       a.heading,
+       round(sum(CASE WHEN a.side = 'income' THEN j.credit - j.debit ELSE j.debit - j.credit END), 2) AS amount,
+       count(*) AS lines
+FROM erp.pnl_accounts a
+JOIN sap.jdt1 j ON j.account = a.gl_code
+WHERE j.transtype IS DISTINCT FROM '-3'
+GROUP BY 1, 2, 3;

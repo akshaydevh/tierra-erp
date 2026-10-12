@@ -24,13 +24,14 @@ import { documentByKey, parseDocKey } from '../queries/documents'
 import type { LlmMessage } from './llm'
 import { runLoop, type LoopResult } from './loop'
 import { gateEffects } from './effect-gate'
+import { chartParts, withoutCharts } from './charts'
 import { AGENT_REPLY, isDeskThread, postToDesk, sendBotText } from './outbox'
 import { freshPin } from './pins'
 import { systemPrompt, userTurn } from './prompt'
 import { describeRefs, istToday, resolveRefs } from './refs'
 import { buildAudience, cardsFor, type Audience } from './scope'
 import { TIERRA_HEADER, ensureTierraPrefix, sendDocument, tierraReplyText } from './send'
-import { toolsFor, type Effect, type ToolContext } from './tools'
+import { forChannel, toolsFor, type Effect, type ToolContext } from './tools'
 
 /**
  * One WhatsApp (or desk) turn, deterministic first:
@@ -113,7 +114,7 @@ export async function recentTurns(deps: AgentDeps, message: IncomingMessage, tex
   return before.slice(-HISTORY_TURNS).flatMap((row): LlmMessage[] => {
     const body = row.body?.trim()
     if (!body) return []
-    if (body.startsWith(TIERRA_HEADER)) return [{ role: 'assistant', content: tierraReplyText(body).slice(0, 1500) }]
+    if (body.startsWith(TIERRA_HEADER)) return [{ role: 'assistant', content: withoutCharts(tierraReplyText(body)).slice(0, 1500) }]
     return [{ role: 'user', content: body.slice(0, 1500) }]
   })
 }
@@ -250,7 +251,7 @@ export async function answerTurn(deps: AgentDeps, input: AnswerInput): Promise<L
   }
   const result = await runLoop({
     model: deps.chatModel,
-    system: systemPrompt({ audience, dataAsOf, now: deps.now() }),
+    system: systemPrompt({ audience, dataAsOf, now: deps.now(), desk: ctx.via === 'desk' }),
     history: await recentTurns(deps, message, input.text),
     user: userTurn({
       text: input.text,
@@ -259,7 +260,7 @@ export async function answerTurn(deps: AgentDeps, input: AnswerInput): Promise<L
       references: describeRefs(refs),
       pinned: await pinnedSubject(deps, pin, audience),
     }),
-    tools: toolsFor(audience),
+    tools: forChannel(toolsFor(audience), ctx.via),
     ctx,
     budgetMs: deps.agentBudgetMs,
   })
@@ -339,7 +340,9 @@ export async function routeMessage(
   // only what the person asked for in this message: text the model read can never record stock or finish a task
   const gated = gateEffects(result.effects, text, deps.now())
   const problems = await runEffects(deps, gated.allowed, speaker, isDeskThread(message.remoteJid) ? 'desk' : 'whatsapp')
-  const sent = await sendBotText(deps, message, [result.text, ...gated.refused, ...problems].join('\n\n'), [], undefined, AGENT_REPLY)
+  // charts reach the desk only (show_chart is not offered on WhatsApp)
+  const charts = isDeskThread(message.remoteJid) ? chartParts(gated.allowed, result.toolRuns) : []
+  const sent = await sendBotText(deps, message, [result.text, ...gated.refused, ...problems, ...charts].join('\n\n'), [], undefined, AGENT_REPLY)
   await sendEffectFiles(deps, message, gated.allowed, speaker?.userId ?? null)
   return sent
 }

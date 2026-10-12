@@ -3,6 +3,7 @@ import { isNotImported } from '../../queries/meta'
 import type { LlmTool, LlmToolCall } from '../llm'
 import type { Audience } from '../scope'
 import { documentTools } from './documents'
+import { chartTools } from './charts'
 import { costingTools } from './costing'
 import { financeTools } from './finance'
 import { hrTools } from './hr'
@@ -33,6 +34,7 @@ export const CATALOGUE: readonly AgentTool[] = [
   ...reportTools,
   ...costingTools,
   ...hrTools,
+  ...chartTools,
 ]
 
 /**
@@ -43,6 +45,11 @@ export function toolsFor(audience: Audience, catalogue: readonly AgentTool[] = C
   if (audience.kind === 'public') return []
   if (audience.kind === 'party') return catalogue.filter((tool) => tool.scope === 'party')
   return catalogue.filter((tool) => tool.roles.includes(audience.role))
+}
+
+/** The tools a channel can carry out: desk-only tools (charts) stay off WhatsApp. */
+export function forChannel(tools: readonly AgentTool[], via: ToolContext['via']): AgentTool[] {
+  return tools.filter((tool) => via === 'desk' || !tool.deskOnly)
 }
 
 export function llmTools(tools: readonly AgentTool[]): LlmTool[] {

@@ -780,6 +780,44 @@ export function groupName(names: readonly string[], fallback: string): string {
   return shared.length ? shared.join(' ') : names[0]!
 }
 
+export type PnlMonth = { month: string; income: number; expenses: number; profit: number }
+export type PnlHeading = { side: 'income' | 'expense'; heading: string; amount: number }
+
+/**
+ * Profit and loss from SAP's journal (erp.pnl_monthly) for the months from..to (first days): revenue, expenditure and
+ * their difference per month (oldest first; months without a journal line are left out), and each heading's total
+ * over the range, largest first.
+ */
+export async function monthlyPnl(sql: SapSql, from: string, to: string): Promise<{ months: PnlMonth[]; headings: PnlHeading[] }> {
+  const rows = await sql`
+    select month, side, heading, amount from erp.pnl_monthly
+    where month between ${from}::date and ${to}::date`
+  const byMonth = new Map<string, PnlMonth>()
+  const byHeading = new Map<string, PnlHeading>()
+  for (const row of rows) {
+    const month = day(row.month)!
+    const side = row.side === 'income' ? 'income' : 'expense'
+    const amount = num(row.amount)
+    const entry = byMonth.get(month) ?? { month, income: 0, expenses: 0, profit: 0 }
+    if (side === 'income') entry.income += amount
+    else entry.expenses += amount
+    byMonth.set(month, entry)
+    const heading = String(row.heading)
+    const key = `${side}:${heading}`
+    const total = byHeading.get(key) ?? { side, heading, amount: 0 }
+    total.amount += amount
+    byHeading.set(key, total)
+  }
+  const months = [...byMonth.values()]
+    .sort((a, b) => a.month.localeCompare(b.month))
+    .map((row) => ({ month: row.month, income: round2(row.income), expenses: round2(row.expenses), profit: round2(row.income - row.expenses) }))
+  const headings = [...byHeading.values()]
+    .map((row) => ({ ...row, amount: round2(row.amount) }))
+    .filter((row) => row.amount !== 0)
+    .sort((a, b) => Math.abs(b.amount) - Math.abs(a.amount))
+  return { months, headings }
+}
+
 export function round2(n: number): number {
   return Math.round((n + Number.EPSILON) * 100) / 100
 }

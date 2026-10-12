@@ -2,6 +2,7 @@ import { z } from 'zod/v4'
 import { FINANCE_ROLES, ROLES, type Role } from '../../db/types'
 import type { CardScope } from '../../sap/db'
 import type { ReceiptLine } from '../../domain/receipts'
+import type { ChartSpec } from '../charts'
 import type { DocKey, FileLink, RecordAccess } from '../../queries/documents'
 import type { DailyInputsPatch } from '../../db/types'
 import type { TaskInput } from '../../tasks/service'
@@ -21,6 +22,8 @@ export type Effect =
   | { kind: 'send_daily_report'; date: string }
   /** Saves daily report inputs the person typed (manpower, banana estimate ...). */
   | { kind: 'set_daily_inputs'; date: string; patch: DailyInputsPatch }
+  /** A chart under the reply on the desk (charts.ts). */
+  | { kind: 'show_chart'; chart: ChartSpec }
 
 export type ToolContext = {
   deps: AgentDeps
@@ -70,6 +73,8 @@ export type AgentTool = {
   scope: ToolScope
   /** Internal roles that may use the tool. Finance and payroll tools (P6/P7) narrow this to manager or admin. */
   roles: readonly Role[]
+  /** Offered on the desk only (show_chart: WhatsApp cannot show it). */
+  deskOnly?: boolean
   args: z.ZodType
   run(ctx: ToolContext, args: unknown): Promise<unknown>
 }
@@ -79,6 +84,7 @@ export function defineTool<S extends z.ZodType>(tool: {
   description: string
   scope: ToolScope
   roles?: readonly Role[]
+  deskOnly?: boolean
   args: S
   run(ctx: ToolContext, args: z.infer<S>): Promise<unknown>
 }): AgentTool {

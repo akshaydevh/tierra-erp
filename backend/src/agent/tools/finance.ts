@@ -1,31 +1,35 @@
 import { z } from 'zod/v4'
 import { FINANCE_ROLES } from '../../db/types'
 import { lineLabel, loadLabelBook } from '../../domain/daily-report'
+import { addMonths, monthLabel, parseMonth } from '../../domain/months'
 import {
   ageingGroups,
   bankLinesOn,
   bankPositions,
   cardBalances,
   journalEntries,
+  monthlyPnl,
   paymentRequests,
   payments,
   round2,
+  type PnlMonth,
 } from '../../queries/finance'
 import { monthStart, searchPattern, textArray, type SapSql } from '../../sap/db'
 import { defineTool, isoDay, type ToolContext } from './types'
 
 /**
- * Finance tools (plan §3.4, M): bank position, payments, party balances, ageing, payments awaiting SAP approval and
- * journal entries. Manager and admin only: the role gate leaves them out of an office user's tool list, so an office
- * question about bank balances never reaches the data.
+ * Finance tools (plan §3.4, M): bank position, payments, party balances, ageing, payments awaiting SAP approval,
+ * journal entries and the monthly profit and loss. Manager and admin only: the role gate leaves them out of an office
+ * user's tool list, so an office question about bank balances never reaches the data.
  */
 
 const partyArg = z.string().min(2).max(80).describe('A customer or supplier: its short name (Mom, Wipro, Flipkart), part of its SAP name, or its card code')
 
+const monthArg = z.string().min(3).max(20).describe('A month: YYYY-MM, or as written ("July", "jul 2026", "last month")')
+
 function asOf(ctx: ToolContext): string {
   return ctx.dataAsOf ?? ctx.referenceDay
 }
-
 
 /**
  * The cards a party name means: an alias ("Mom") or a card code gives that card and every card of the same company
@@ -180,6 +184,34 @@ export const financeTools = [
           memo: row.memo,
           bank: row.bank,
         })),
+      }
+    },
+  }),
+  defineTool({
+    name: 'monthly_pnl',
+    description:
+      "Profit and loss per month from SAP's books: revenue, expenses and profit (revenue - expenses) for each month in a range (default the six months up to the SAP data month), the totals, and the revenue and expense headings behind them (Sales of Products, Purchases, Inventory Variance, Factory Overheads, Employee Benefit Expenses ...), largest first. Use it for monthly expense, revenue, profit or loss and their trend.",
+    scope: 'internal',
+    roles: FINANCE_ROLES,
+    args: z.object({ from_month: monthArg.optional(), to_month: monthArg.optional() }),
+    async run(ctx, args) {
+      const reference = asOf(ctx)
+      const to = (args.to_month && parseMonth(args.to_month, reference)) || `${reference.slice(0, 7)}-01`
+      const from = (args.from_month && parseMonth(args.from_month, reference)) || addMonths(to, -5)
+      if (from > to) return { error: 'from_month is after to_month.' }
+      if (from < addMonths(to, -23)) return { error: 'Ask for at most 24 months at a time.' }
+      const { months, headings } = await monthlyPnl(ctx.deps.sapSql, from, to)
+      const sum = (pick: (row: PnlMonth) => number) => round2(months.reduce((total, row) => total + pick(row), 0))
+      return {
+        period: from === to ? monthLabel(from) : `${monthLabel(from)} to ${monthLabel(to)}`,
+        // keyed by month, not a list: a list result keeps only its first 10 rows, and a year needs all twelve
+        months: Object.fromEntries(
+          months.map((row) => [row.month.slice(0, 7), { revenue: Math.round(row.income), expenses: Math.round(row.expenses), profit: Math.round(row.profit) }]),
+        ),
+        totals: { revenue: sum((row) => row.income), expenses: sum((row) => row.expenses), profit: sum((row) => row.profit) },
+        revenueHeadings: headings.filter((row) => row.side === 'income').slice(0, 6).map((row) => ({ heading: row.heading, amount: Math.round(row.amount) })),
+        expenseHeadings: headings.filter((row) => row.side === 'expense').slice(0, 10).map((row) => ({ heading: row.heading, amount: Math.round(row.amount) })),
+        note: "Book figures from SAP's journal before year-end closing, not audited accounts. Inventory Variance (stock differences, WIP variance) are stock adjustments and can swing a single month a long way.",
       }
     },
   }),

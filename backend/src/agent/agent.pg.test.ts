@@ -115,6 +115,54 @@ describe.skipIf(!pg)('Agent v2 on the synthetic SAP fixture', () => {
       expect(llm.requests[0]?.messages.at(-1)?.content).toContain('"ZFGA100" = item ZFGA100 (Zeta Banana Chips 100g)')
     })
 
+    it('charts the monthly profit and loss under the reply, from the figures monthly_pnl returned', async () => {
+      llm.script(
+        useTools(callTool('monthly_pnl', { from_month: '2026-02', to_month: '2026-03' })),
+        (request) => {
+          const months = lastTool(request).months as Record<string, { revenue: number; expenses: number; profit: number }>
+          const keys = Object.keys(months)
+          return useTools(
+            callTool('show_chart', {
+              type: 'bar',
+              title: 'Revenue and expenses',
+              labels: keys,
+              series: [
+                { name: 'Revenue', values: keys.map((key) => months[key]!.revenue) },
+                { name: 'Expenses', values: keys.map((key) => months[key]!.expenses) },
+              ],
+              unit: 'inr',
+            }),
+          )
+        },
+        say('Here is the trend.'),
+      )
+      const reply = await ask('monthly expense and profit for Feb and Mar?')
+      const pnl = JSON.parse(llm.toolResults()[0]!) as Record<string, any>
+      expect(pnl.period).toBe('February 2026 to March 2026')
+      expect(Object.keys(pnl.months)).toEqual(['2026-02', '2026-03'])
+      expect(pnl.months['2026-02']).toEqual({ revenue: 0, expenses: 80000, profit: -80000 })
+      expect(pnl.expenseHeadings).toContainEqual({ heading: 'Salary and allowances -Office', amount: 30000 })
+      expect(JSON.parse(llm.toolResults()[1]!)).toMatchObject({ queued: true })
+      expect(llm.system()).toContain('show_chart')
+      const chart = /```tierra-chart\n(.+)\n```/.exec(reply)
+      expect(reply.startsWith('Here is the trend.')).toBe(true)
+      expect(JSON.parse(chart![1]!)).toMatchObject({ type: 'bar', labels: ['2026-02', '2026-03'], series: [{ name: 'Revenue' }, { name: 'Expenses' }] })
+      // the chart stays out of what the model reads back as history
+      llm.script(say('ok'))
+      await ask('thanks')
+      expect(llm.requests.at(-1)!.messages.map((message) => String(message.content)).join('\n')).not.toContain('tierra-chart')
+    })
+
+    it('leaves out a chart whose figures no tool returned', async () => {
+      llm.script(
+        useTools(callTool('show_chart', { type: 'line', title: 'Profit', labels: ['Jan', 'Feb'], series: [{ name: 'Profit', values: [123456, 654321] }] })),
+        say('Profit went up.'),
+      )
+      const reply = await ask('chart my profit')
+      expect(reply).not.toContain('tierra-chart')
+      expect(reply).toContain('A chart was left out')
+    })
+
     it('compares a production order with its BOM and flags placeholder BOM lines', async () => {
       llm.script(useTools(callTool('consumption_vs_bom', { doc_no: 'PR 1' })), say('ok'))
       await ask('what did PR 1 consume vs BOM?')

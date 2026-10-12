@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkBreaks from 'remark-breaks'
 import remarkGfm from 'remark-gfm'
+import { AgentChart, parseChart, type ChartSpec } from '@/components/agent-chart'
 
 type AgentMessage = {
   id: string
@@ -88,6 +89,19 @@ function FileChips({ files }: { files: FileChip[] }) {
       ))}
     </div>
   )
+}
+
+const CHART_BLOCK = /\n*```tierra-chart\n([\s\S]*?)\n```/g
+
+/** The message text without its chart blocks, and the charts the desk can draw. */
+function splitCharts(text: string): { text: string; charts: ChartSpec[] } {
+  const charts: ChartSpec[] = []
+  const rest = text.replace(CHART_BLOCK, (_match, json: string) => {
+    const chart = parseChart(json)
+    if (chart) charts.push(chart)
+    return ''
+  })
+  return { text: rest.trim(), charts }
 }
 
 type Thread = { messages: AgentMessage[]; pending?: boolean }
@@ -238,12 +252,16 @@ export function AgentChat() {
           </div>
         ) : null}
         {messages.map((message) => {
-          const { text: body, files } = message.role === 'tierra' ? splitFiles(message.text) : { text: message.text, files: [] }
+          const { text: withoutCharts, charts } = message.role === 'tierra' ? splitCharts(message.text) : { text: message.text, charts: [] }
+          const { text: body, files } = message.role === 'tierra' ? splitFiles(withoutCharts) : { text: message.text, files: [] }
           return (
-            <article key={message.id} className={message.role === 'user' ? 'bubble me' : 'bubble'}>
+            <article key={message.id} className={message.role === 'user' ? 'bubble me' : charts.length ? 'bubble wide' : 'bubble'}>
               <span className="bubblelabel">{message.role === 'user' ? 'You' : 'Tierra Agent'}</span>
               {message.filename ? <div className="pdfchip">{message.filename}</div> : null}
               {body ? <MessageText text={body} /> : null}
+              {charts.map((chart, i) => (
+                <AgentChart key={i} chart={chart} />
+              ))}
               <FileChips files={files} />
             </article>
           )

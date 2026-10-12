@@ -5,7 +5,7 @@ import { FakeModel, callTool, say, useTools } from '../test/fake-llm'
 import type { AgentDeps } from './deps'
 import { COULD_NOT_FINISH, MAX_ROUNDS, runLoop } from './loop'
 import type { Audience } from './scope'
-import { CATALOGUE, RESULT_LIMIT, capResult, toolsFor } from './tools'
+import { CATALOGUE, RESULT_LIMIT, capResult, forChannel, toolsFor } from './tools'
 import { defineTool, type ToolContext } from './tools/types'
 
 const alex: Audience = { kind: 'internal', userId: 'usr_alex', name: 'Alex Thomas', role: 'admin' }
@@ -203,7 +203,7 @@ describe('tool scope', () => {
   })
 
   it('keeps finance and the daily report to the manager and the admin, and the daily inputs to the office and the admin', () => {
-    const finance = ['bank_position', 'payments', 'party_balance', 'ageing', 'pending_payment_approvals', 'find_journal_entries', 'daily_report', 'production_cost', 'sku_margin']
+    const finance = ['bank_position', 'payments', 'party_balance', 'ageing', 'pending_payment_approvals', 'find_journal_entries', 'daily_report', 'production_cost', 'sku_margin', 'monthly_pnl']
     const hr = ['payroll_summary', 'attendance', 'leave_requests']
     const joshy: Audience = { kind: 'internal', userId: 'usr_joshy', name: 'Joshy', role: 'manager' }
     const office = toolsFor(anju).map((tool) => tool.name)
@@ -219,6 +219,12 @@ describe('tool scope', () => {
     expect(manager).not.toContain('set_daily_inputs')
     expect(office).toEqual(CATALOGUE.filter((tool) => !finance.includes(tool.name) && !hr.includes(tool.name)).map((tool) => tool.name))
     expect(toolsFor(alpha).map((tool) => tool.name)).not.toContain('bank_position')
+  })
+
+  it('offers show_chart on the desk only', () => {
+    expect(forChannel(toolsFor(anju), 'desk').map((tool) => tool.name)).toContain('show_chart')
+    expect(forChannel(toolsFor(anju), 'whatsapp').map((tool) => tool.name)).not.toContain('show_chart')
+    expect(forChannel(toolsFor(alex), 'whatsapp')).toHaveLength(CATALOGUE.length - 1)
   })
 
   it('refuses a tool the audience was not offered, even if the model names it', async () => {

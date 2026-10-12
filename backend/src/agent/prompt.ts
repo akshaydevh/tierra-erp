@@ -15,7 +15,7 @@ const GLOSSARY = [
   '- A customer PO number is the buyer\'s own purchase-order number (large retail chains use 10 digits, e.g. 4400012345); SAP keeps it on the sales order as the customer reference.',
   '- In chat "vendor" usually means the customer (Tierra is their vendor). Free stock = on hand - committed.',
   '- "Can we make / supply N of X?" is check_order (a dry run of the inventory check); "why is PO … short / explain the check" is explain_check. Received customer POs (PDFs) are checked automatically.',
-  '- Finance: RT/… are incoming payments (receipts), PA/… outgoing payments, JV/… journal entries. Balances come from SAP\'s ledger; customers usually pay on account, so receivables are netted per company (all branches with one PAN) and aged first-in first-out. The daily report is one PDF page per day (bank position, receipts, payments, outwards, inwards, manpower); daily_report sends it.',
+  '- Finance: RT/… are incoming payments (receipts), PA/… outgoing payments, JV/… journal entries. Balances come from SAP\'s ledger; customers usually pay on account, so receivables are netted per company (all branches with one PAN) and aged first-in first-out. The daily report is one PDF page per day (bank position, receipts, payments, outwards, inwards, manpower); daily_report sends it. monthly_pnl gives revenue, expenses and profit per month from SAP\'s books (book figures, not audited accounts).',
   '- Costing (production_cost, sku_margin) is material cost only: SAP holds no labour or overhead cost (labour, power and water are issued to production at ₹0). Say "material cost" and never estimate labour or overheads.',
   '- Payroll, attendance and leave come from the HR files (Voyon, the salary register, the temporary workers\' sheet), not SAP. Voyon and the salary register are the same permanent staff: never add their totals.',
   '- A passed customer PO becomes a Tierra sales order (TSO/26-27/0001) that the admin approves; get_so reads it (delivery date, term, site, lines, to make, approval), send_so_pdf sends its PDF again. Stock reserved by TSOs and unposted receipts are in check_order and free_stock.',
@@ -81,7 +81,12 @@ function audienceText(audience: Audience): string {
   ].join(' ')
 }
 
-export function systemPrompt(input: { audience: Audience; dataAsOf: string | null; now: Date }): string {
+/** The desk can show charts; WhatsApp cannot, so the rule is only given there. */
+const DESK_CHARTS = [
+  'Charts: this is the Tierra desk (web), which can show charts under your reply. When the answer is a series or a comparison (revenue, expenses or profit by month, sales or payments over time, top customers or items, an expense breakdown), first get the figures with the data tools, then call show_chart with those figures exactly as the tool returned them (rupees in whole rupees, not lakhs). Still give the key figures and what they mean in your text. Do not chart a single number or a list of documents.',
+].join('\n')
+
+export function systemPrompt(input: { audience: Audience; dataAsOf: string | null; now: Date; desk?: boolean }): string {
   const data = input.dataAsOf
     ? `SAP data is as of ${input.dataAsOf} (the last import). In SAP questions "today" means ${input.dataAsOf} and "yesterday" the day before; say figures are "as of ${input.dataAsOf}", never live.`
     : 'SAP data has not been imported yet, so there are no business figures.'
@@ -91,6 +96,7 @@ export function systemPrompt(input: { audience: Audience; dataAsOf: string | nul
     `It is now ${istDateTime(input.now)} IST. ${data}`,
     GLOSSARY,
     RULES,
+    ...(input.desk && input.audience.kind === 'internal' ? [DESK_CHARTS] : []),
   ].join('\n\n')
 }
 

@@ -557,6 +557,84 @@ td .sub { font-size: 12px; color: var(--inksoft); margin-top: 2px; }
 .pendingfile { display: flex; align-items: center; gap: 10px; font-size: 13px; font-weight: 600; }
 .pendingfile button { color: var(--coral); font-size: 12px; font-weight: 700; }
 .agentstatus { font-size: 13px; color: var(--inksoft); font-weight: 600; }
+.bubble.wide { width: min(640px, 86%); }
+/* Charts in Tierra Agent replies (components/agent-chart.tsx). Series slots are the validated categorical order. */
+.chart {
+  --series-1: #2a78d6;
+  --series-2: #eb6834;
+  --series-3: #1baf7a;
+  --series-4: #eda100;
+  --series-5: #e87ba4;
+  --series-6: #008300;
+  --series-7: #6250d6;
+  --series-8: #e34948;
+  --chart-grid: #e6eae2;
+  --chart-base: #c3c9bd;
+  margin: 12px 0 4px;
+  padding: 12px 12px 10px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--paper);
+}
+.charthead { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 6px; }
+.charttitle { font-size: 13px; font-weight: 700; color: var(--ink); }
+.charttoggle {
+  flex: none;
+  padding: 2px 10px;
+  border-radius: 99px;
+  border: 1px solid var(--line);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--inksoft);
+}
+.charttoggle:hover { border-color: var(--ink); color: var(--ink); }
+.chartlegend { display: flex; flex-wrap: wrap; gap: 4px 14px; margin: 0 0 6px; padding: 0; list-style: none; font-size: 12px; color: var(--inksoft); }
+.chartlegend li { display: inline-flex; align-items: center; gap: 6px; }
+.chartlegend.vertical { flex-direction: column; flex-wrap: nowrap; justify-content: center; min-width: 0; }
+.chartlegend.vertical li span:nth-child(2) { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chart .key { width: 10px; height: 10px; border-radius: 3px; flex: none; }
+.chart .key.line { height: 2px; width: 14px; border-radius: 1px; }
+.chartplot { position: relative; }
+.chartplot svg { display: block; overflow: visible; touch-action: pan-y; }
+.chartgrid { stroke: var(--chart-grid); stroke-width: 1; }
+.chartbase { stroke: var(--chart-base); stroke-width: 1; }
+.chartcross { stroke: var(--chart-base); stroke-width: 1; pointer-events: none; }
+.charthoverband { fill: var(--ink); opacity: 0.04; }
+.charttick, .chartlabel { font-size: 11px; fill: var(--mute); font-variant-numeric: tabular-nums; }
+.chartlabel { fill: var(--inksoft); }
+.chartvalue { font-size: 11px; font-weight: 600; fill: var(--ink); font-variant-numeric: tabular-nums; }
+.chartcentre { font-size: 15px; font-weight: 700; fill: var(--ink); }
+.chartdot { stroke: var(--paper); stroke-width: 2; pointer-events: none; }
+.chartslice { stroke: var(--paper); stroke-width: 2; }
+.chartslice:hover { opacity: 0.85; }
+.chartdonut { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 16px; align-items: center; }
+.charttip {
+  position: absolute;
+  z-index: 5;
+  min-width: 160px;
+  max-width: 220px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: var(--paper);
+  box-shadow: var(--sh);
+  font-size: 12px;
+  pointer-events: none;
+  transform: translateY(-100%);
+}
+.charttiphead { font-weight: 700; margin-bottom: 4px; color: var(--ink); }
+.charttiprow { display: grid; grid-template-columns: 10px 1fr auto; align-items: center; gap: 6px; color: var(--inksoft); }
+.charttiprow .num { color: var(--ink); font-weight: 600; text-align: right; }
+.chartmuted { color: var(--mute); }
+.charttable { overflow-x: auto; }
+.charttable table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+.charttable th, .charttable td { padding: 4px 8px; border-bottom: 1px solid var(--line); text-align: left; }
+.charttable .num { text-align: right; }
+.charttable thead th { color: var(--inksoft); font-weight: 600; }
+.chartnote { margin-top: 6px; font-size: 11.5px; color: var(--mute); }
+@media (max-width: 520px) {
+  .chartdonut { grid-template-columns: 1fr; justify-items: center; }
+}
 .taskboard { display: flex; flex-direction: column; gap: 16px; }
 .taskform {
   display: grid;
