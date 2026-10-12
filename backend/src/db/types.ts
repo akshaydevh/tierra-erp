@@ -274,7 +274,7 @@ export type PartyAlias = { cardCode: string; alias: string }
 
 /**
  * received: stored, not read yet. needs_review: the office must look (unreadable, customer or item not resolved).
- * awaiting_proceed: a repeat of a PO already in SAP or already received; the admin replies *proceed*.
+ * awaiting_proceed: checked and waiting for the admin's *proceed* (a new PO, or a repeat of one already in SAP or received).
  * short: checked and materials are short (P4 raises procurement). checked: passed and handed on (P4 raises the SO).
  */
 export const CUSTOMER_PO_STATUSES = ['received', 'needs_review', 'awaiting_proceed', 'short', 'checked', 'cancelled'] as const

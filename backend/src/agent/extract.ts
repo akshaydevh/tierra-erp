@@ -11,9 +11,11 @@ import {
   type PoReader,
 } from '../domain/po'
 import { isZMatPoPrint, parseZMatPoPrint } from './po-reader/zmat'
+import { CONFIDENCE_FLOOR, type PdfClassifier } from './classifiers'
 
 /**
- * Reading a received PDF (plan §P3): the PO gate on the text of pages 1-2, then the deterministic Z_MAT_POPRINT
+ * Reading a received PDF (plan §P3): the PO gate on the text of pages 1-2 (TypeSafe when configured, else the
+ * "purchase order" + PO number rule), then the deterministic Z_MAT_POPRINT
  * reader when the layout matches, else the LLM reader (zod v2 schema). Both pass the totals guard; anything that
  * fails ends as `unreadable`, which the intake turns into an office review task. Nothing here guesses a value.
  */
@@ -236,15 +238,31 @@ function guarded(po: ExtractedPo, reader: PoReader): PoRead {
   return { kind: 'po', po, reader }
 }
 
+/** TypeSafe's word on whether the text is a customer PO; null (the rule decides) without a key, on a failure or when unsure. */
+async function classifiedAsPo(all: string, classify: PdfClassifier | null | undefined): Promise<boolean | null> {
+  if (!classify) return null
+  try {
+    const answer = await classify({ text: all })
+    return answer.confidence < CONFIDENCE_FLOOR ? null : answer.choice === 'customer_po'
+  } catch (error) {
+    console.error('pdf_kind (TypeSafe) failed; using the PO rule', error)
+    return null
+  }
+}
+
 /** Reads a PDF's text (pages 1-2) as a customer PO. */
-export async function readPoText(text: PdfText, env: ExtractEnv): Promise<PoRead> {
+export async function readPoText(text: PdfText, env: ExtractEnv, classify?: PdfClassifier | null): Promise<PoRead> {
   const all = text.pages.join('\n\n')
   if (all.trim().length < 20) {
     return { kind: 'unreadable', reason: 'The PDF has no readable text (a scan?).', poNumber: null, reader: null }
   }
-  if (!isPurchaseOrderText(all)) return { kind: 'not_po', reason: 'The text does not say purchase order.' }
   const poNumber = poNumberOnPage(text.pages[0] ?? '')
-  if (!poNumber) return { kind: 'not_po', reason: 'No PO number on page 1.' }
+  const isPo = await classifiedAsPo(all, classify)
+  if (isPo === false) return { kind: 'not_po', reason: 'TypeSafe read it as something other than a customer PO.' }
+  if (isPo === null) {
+    if (!isPurchaseOrderText(all)) return { kind: 'not_po', reason: 'The text does not say purchase order.' }
+    if (!poNumber) return { kind: 'not_po', reason: 'No PO number on page 1.' }
+  }
   if (isZMatPoPrint(all, text.creator)) {
     const po = parseZMatPoPrint(all)
     if (po) return guarded(po, 'z_mat_poprint')
@@ -257,12 +275,12 @@ export async function readPoText(text: PdfText, env: ExtractEnv): Promise<PoRead
   }
 }
 
-export async function readPurchaseOrder(pdf: Buffer, env: ExtractEnv): Promise<PoRead> {
+export async function readPurchaseOrder(pdf: Buffer, env: ExtractEnv, classify?: PdfClassifier | null): Promise<PoRead> {
   let text: PdfText
   try {
     text = await extractPdfPages(pdf)
   } catch {
     return { kind: 'unreadable', reason: 'The PDF could not be opened.', poNumber: null, reader: null }
   }
-  return readPoText(text, env)
+  return readPoText(text, env, classify)
 }

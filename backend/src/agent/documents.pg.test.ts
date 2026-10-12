@@ -89,6 +89,7 @@ describe.skipIf(!pg)('SAP documents on demand (synthetic fixture)', () => {
         return { messageId: `out-m-${++seq}` }
       },
       sendReaction: async () => undefined,
+      fetchGroupParticipants: async () => [],
       fetchAllGroups: async () => [],
     } as unknown as EvolutionClient
     deps = {

@@ -20,7 +20,7 @@ const INTENT_CRITERIA = {
 
 const TIMEOUT_MS = 30_000
 
-function withTimeout<T>(work: Promise<T>, ms: number): Promise<T> {
+export function withTimeout<T>(work: Promise<T>, ms: number): Promise<T> {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error(`TypeSafe did not answer within ${ms / 1000} s`)), ms)
     work.then(

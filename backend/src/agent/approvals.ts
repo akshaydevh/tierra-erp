@@ -64,7 +64,7 @@ async function quotedApproval(deps: AgentDeps, message: IncomingMessage): Promis
 }
 
 /** The bot's last message in this chat was a tool-loop answer (the admin is asking questions, not deciding). */
-async function lastBotTurnWasAnswer(deps: AgentDeps, message: IncomingMessage): Promise<boolean> {
+export async function lastBotTurnWasAnswer(deps: AgentDeps, message: IncomingMessage): Promise<boolean> {
   const rows = await deps.store.listRecentMessages(chatJids(message), 12)
   const at = rows.findIndex((row) => row.id === message.id)
   const before = at >= 0 ? rows.slice(0, at) : rows

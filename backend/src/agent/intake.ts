@@ -12,7 +12,7 @@ import type { AgentDeps } from './deps'
 import { ExtractError } from './extract'
 import { knownGroup, raiseMapGroupTask } from './groups'
 import { deskThreadJid, isDeskThread, postToDesk, sendBotText, type Subject } from './outbox'
-import { ensureTierraPrefix, sendDm } from './send'
+import { ensureTierraPrefix, phoneJid, sendDm } from './send'
 
 /**
  * The PDF intake hook (plan §P3). A PDF is stored once per message, then read:
@@ -140,9 +140,18 @@ export async function notifyAdmin(deps: AgentDeps, accounts: AccountLink[], text
   await postToDesk(deps.store, deskThreadJid(admin.id), ensureTierraPrefix(text), subject)
 }
 
+/** A PO waiting for *proceed* pins the admin's chats to it, as an approval request does: a plain "yes" there is about it. */
+export async function pinAdminToPo(deps: AgentDeps, accounts: AccountLink[], po: CustomerPo): Promise<void> {
+  const admin = holderForRole(accounts, 'admin')
+  if (!admin || po.status !== 'awaiting_proceed') return
+  await deps.store.setChatContext(deskThreadJid(admin.id), 'customer_po', po.id)
+  if (admin.phoneNumber) await deps.store.setChatContext(phoneJid(admin.phoneNumber), 'customer_po', po.id)
+}
+
 async function reply(deps: AgentDeps, input: IntakeInput, outcome: Pick<IntakeOutcome, 'po' | 'summary'>): Promise<string | null> {
   const { message, chatKind, speaker, accounts } = input
   const subject = poSubject(outcome.po)
+  await pinAdminToPo(deps, accounts, outcome.po)
   if (speaker && chatKind !== 'group') {
     if (speaker.role !== 'admin') await notifyAdmin(deps, accounts, outcome.summary, subject)
     return sendBotText(deps, message, outcome.summary, [], subject)
@@ -159,7 +168,6 @@ export async function intakePdf(deps: AgentDeps, input: IntakeInput): Promise<st
   const stored = await storedPdf(deps, input)
   if (!stored) return null
   if ('error' in stored) return inGroup ? null : sendBotText(deps, message, withSender(stored.error, speaker))
-  if (inGroup && speaker) return null
 
   const sender = senderLabel(message, chatKind, speaker)
   let group: Awaited<ReturnType<typeof knownGroup>> | null = null

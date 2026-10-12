@@ -15,7 +15,7 @@ import type { ExtractedPo, PoRead } from './domain/po'
 import { inlineEnqueue, runDueJobs, runJob } from './jobs/worker'
 import { postToDesk } from './agent/outbox'
 import { groupSendKey, sendForApproval } from './workflows/po-to-so'
-import type { EvolutionClient, MediaMessage, WhatsappGroup } from './whatsapp/evolution'
+import type { EvolutionClient, GroupParticipant, MediaMessage, WhatsappGroup } from './whatsapp/evolution'
 import { parseWebhook, type BotMode, type IncomingMessage } from './whatsapp/parse'
 import { ownerPhoneFromInstances } from './whatsapp/qr'
 
@@ -24,6 +24,8 @@ class FakeEvolution implements EvolutionClient {
   media: MediaMessage[] = []
   groups: WhatsappGroup[] = [{ id: '120363000@g.us', subject: 'Acme Retail – Tierra demo', size: 4 }]
   failGroups = false
+  participants: GroupParticipant[] = []
+  participantFetches = 0
   webhookSets = 0
   reactions: Array<{ remoteJid: string; messageId: string; fromMe: boolean; emoji: string }> = []
   created = 0
@@ -58,6 +60,11 @@ class FakeEvolution implements EvolutionClient {
   async fetchAllGroups() {
     if (this.failGroups) throw new Error('down')
     return this.groups
+  }
+
+  async fetchGroupParticipants() {
+    this.participantFetches += 1
+    return this.participants
   }
 
   async ensureWebhook() {
@@ -742,6 +749,57 @@ describe('tierra bot', () => {
     await post(textMessage('g-at', GROUP, '@919900000000 what is left'))
     expect(ctx.evolution.sent).toHaveLength(1)
     expect(ctx.llm.calls).toBe(1)
+  })
+
+  it('answers a group @mention sent as the bot LID, learning the group members once', async () => {
+    await ctx.mapGroup(GROUP)
+    const BOT_LID = '140000000000001@lid'
+    ctx.evolution.participants = [
+      { lid: BOT_LID, phoneJid: '919900000000@s.whatsapp.net' },
+      { lid: '140000000000002@lid', phoneJid: '919812345678@s.whatsapp.net' },
+    ]
+    const lidMention = (id: string, text: string) => ({
+      event: 'messages.upsert',
+      instance: 'tierra',
+      data: {
+        key: { id, remoteJid: GROUP, fromMe: false },
+        message: { extendedTextMessage: { text, contextInfo: { mentionedJid: [BOT_LID] } } },
+      },
+    })
+    await post(lidMention('g-lid', '@140000000000001'))
+    await post(lidMention('g-lid-2', '@140000000000001 what is pending'))
+    expect(ctx.llm.calls).toBe(2)
+    expect(ctx.evolution.participantFetches).toBe(1)
+  })
+
+  it('answers a group message that calls Tierra by name', async () => {
+    await ctx.mapGroup(GROUP)
+    await post(textMessage('g-hey', GROUP, 'hey tierra'))
+    expect(ctx.llm.calls).toBe(1)
+  })
+
+  it('asks TypeSafe only about a group message that names Tierra without a clear call', async () => {
+    await ctx.mapGroup(GROUP)
+    const asked: string[] = []
+    let answer: { choice: 'call' | 'chatter'; confidence: number } | Error = { choice: 'call', confidence: 0.9 }
+    ctx.deps.callClassifier = async ({ text }) => {
+      asked.push(text)
+      if (answer instanceof Error) throw answer
+      return answer
+    }
+    await post(textMessage('g-tc-1', GROUP, 'can Tierra share the dispatch status'))
+    expect(ctx.llm.calls).toBe(1)
+    answer = { choice: 'chatter', confidence: 0.9 }
+    await post(textMessage('g-tc-2', GROUP, 'the Tierra truck reached'))
+    answer = { choice: 'call', confidence: 0.4 }
+    await post(textMessage('g-tc-3', GROUP, 'Tierra truck reached?'))
+    answer = new Error('TypeSafe did not answer within 10 s')
+    await post(textMessage('g-tc-4', GROUP, 'tierra truck again'))
+    expect(ctx.llm.calls).toBe(1)
+    // clear calls and messages without the name never reach TypeSafe
+    await post(textMessage('g-tc-5', GROUP, 'hey tierra'))
+    await post(textMessage('g-tc-6', GROUP, 'lunch?'))
+    expect(asked).toEqual(['can Tierra share the dispatch status', 'the Tierra truck reached', 'Tierra truck reached?', 'tierra truck again'])
   })
 
   it('ignores a group message that does not mention Tierra Bot', async () => {
@@ -1916,7 +1974,7 @@ describe('P3: WhatsApp groups, party groups and the PO intake pages', () => {
     expect((await ctx.store.getWaGroup(MAPPED))?.partyGroupId).toBeNull()
   })
 
-  it('takes a PDF in a mapped group without a mention, but not from Tierra staff and not in an unmapped group', async () => {
+  it('takes a PDF in a mapped group without a mention, from the customer or Tierra staff, but not in an unmapped group', async () => {
     const outsider = '919811100000@s.whatsapp.net'
     expect(await (await post(groupPdf('g-unmapped', outsider))).json()).toEqual({ ignored: true })
 
@@ -1928,13 +1986,12 @@ describe('P3: WhatsApp groups, party groups and the PO intake pages', () => {
     expect(ctx.evolution.sent.find((row) => row.number === ALEX_PHONE)?.text).toContain(NOT_IMPORTED_SUMMARY)
     expect(ctx.store.customerPos[0]).toMatchObject({ partyGroupId: ctx.store.partyGroups[0]!.id, sourceChat: MAPPED })
 
-    // Anju (a linked account) posting a PDF there: stored, nothing said, nothing read
-    const before = ctx.evolution.sent.length
+    // Anju (a linked account) forwarding the customer's PO there: read like the customer's own
     const checks = ctx.pdfChecks()
     await post(groupPdf('g-staff', `${ANJU_PHONE}@s.whatsapp.net`))
-    expect(ctx.evolution.sent).toHaveLength(before)
-    expect(ctx.pdfChecks()).toBe(checks)
+    expect(ctx.pdfChecks()).toBe(checks + 1)
     expect(ctx.store.documents.some((doc) => doc.messageId === 'g-staff')).toBe(true)
+    expect(ctx.store.customerPos.map((po) => po.sourceMessageId)).toContain('g-staff')
     // a text there without a mention is still ignored
     expect(await (await post(textMessage('g-text', MAPPED, 'hello'))).json()).toEqual({ ignored: true })
   })
@@ -1957,11 +2014,11 @@ describe('P3: WhatsApp groups, party groups and the PO intake pages', () => {
     expect((await ctx.app.request('/api/customer-pos?status=needs_review', { headers: { cookie: office } })).status).toBe(200)
   })
 
-  it('answers proceed only for the admin, and only when a repeat waits', async () => {
+  it('answers proceed only for the admin, and only when a PO waits', async () => {
     await post(textMessage('p-anju', `${ANJU_PHONE}@s.whatsapp.net`, 'proceed'))
-    expect(ctx.evolution.sent.at(-1)?.text).toBe('> 🧞‍♂️ Tierra Bot:\n\nOnly the admin can go ahead with a repeat PO.')
+    expect(ctx.evolution.sent.at(-1)?.text).toBe('> 🧞‍♂️ Tierra Bot:\n\nOnly the admin can go ahead with a PO.')
     await post(textMessage('p-alex', `${ALEX_PHONE}@s.whatsapp.net`, 'proceed'))
-    expect(ctx.evolution.sent.at(-1)?.text).toBe('> 🧞‍♂️ Tierra Bot:\n\nNo repeat PO is waiting for *proceed*.')
+    expect(ctx.evolution.sent.at(-1)?.text).toBe('> 🧞‍♂️ Tierra Bot:\n\nNo PO is waiting for *proceed*.')
     expect(ctx.llm.calls).toBe(0)
   })
 })

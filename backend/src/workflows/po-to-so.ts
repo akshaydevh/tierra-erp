@@ -102,7 +102,7 @@ export async function groupWithSendOff(deps: FlowDeps, order: Pick<SalesOrder, '
 // ------------------------------------------------------------------------------------------------ entry points
 
 /**
- * The P3 seam: a PO has been checked (and, for a repeat, the admin said *proceed*). Queues po.process and says what
+ * The P3 seam: a PO has been checked and the admin said *proceed*. Queues po.process and says what
  * happens next, for the admin's summary.
  */
 export async function queuePoProcess(deps: FlowDeps, po: CustomerPo, check: InventoryCheck): Promise<string> {

@@ -59,6 +59,7 @@ describe.skipIf(!pg)('Agent v2 on the synthetic SAP fixture', () => {
         return { messageId: `out-${sent.length}-${Date.now()}` }
       },
       sendReaction: async () => undefined,
+      fetchGroupParticipants: async () => [],
       fetchAllGroups: async () => [],
     } as unknown as EvolutionClient
     deps = {

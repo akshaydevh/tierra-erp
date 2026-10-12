@@ -43,7 +43,7 @@ import { customerGroupFor, salesOrderView } from './workflows/po-to-so'
 import { cancelSalesOrder, pendingApprovals } from './workflows/so-approval'
 import { PoReviewError, confirmPoReview, reviewPo } from './workflows/po-intake'
 import { syncWithSap } from './workflows/sap-sync'
-import { notifyAdmin } from './agent/intake'
+import { notifyAdmin, pinAdminToPo } from './agent/intake'
 import { recordReceipt } from './workflows/receipts'
 import { approvalCards, approvalViews, decideFromDesk, requestLabels, salesOrderSummary } from './workflows/desk-views'
 import { acceptWebhook } from './whatsapp/accept'
@@ -1212,15 +1212,17 @@ export function createApp(deps: AppDeps) {
     }
   })
 
-  /** "Confirm and check": check the reviewed PO again and carry on (TSO, hold, or a repeat waiting for *proceed*). */
+  /** "Confirm and check": check the reviewed PO again and carry on (it then waits for the admin's *proceed*). */
   app.post('/api/customer-pos/:id/confirm', async (c) => {
     const user = await userFrom(c.req.header('cookie'))
     if (!user) return c.json({ error: 'Unauthorized' }, 401)
     try {
       const result = await confirmPoReview(deps, c.req.param('id'))
-      await notifyAdmin(deps, await deps.store.listAccountLinks(), result.summary, { subjectType: 'customer_po', subjectId: result.po.id }).catch(
+      const accounts = await deps.store.listAccountLinks()
+      await notifyAdmin(deps, accounts, result.summary, { subjectType: 'customer_po', subjectId: result.po.id }).catch(
         (error: unknown) => console.error('Could not send the admin the confirmed PO', error),
       )
+      await pinAdminToPo(deps, accounts, result.po)
       return c.json({ po: result.po, check: result.check, message: result.next })
     } catch (error) {
       if (error instanceof PoReviewError) return c.json({ error: error.message }, 409)

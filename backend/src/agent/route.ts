@@ -5,7 +5,7 @@ import { handleOrderCommand } from './order-commands'
 import { importMeta } from '../queries/meta'
 import { completeTask, createTaskAndNotify, UnknownAssigneeError } from '../tasks/service'
 import { raiseMapGroupTask } from './groups'
-import { PROCEED, handleProceed } from './po-commands'
+import { PROCEED, handleProceed, handleProceedText } from './po-commands'
 import { isOpenTask } from '../tasks/done'
 import { resolvePeople, type Person } from '../whatsapp/people'
 import { deliveryAddress, replyChatJid, type ChatKind, type IncomingMessage } from '../whatsapp/parse'
@@ -38,7 +38,7 @@ import { forChannel, toolsFor, type Effect, type ToolContext } from './tools'
  * 1. a reaction -> task done (never the model);
  * 2. a quote of a bot message that has a subject -> that subject is pinned for the chat;
  * 3. a PDF -> the intake hook;
- * 4. commands: *done* on task notices, *test pdf*, *proceed* on a repeat PO, the daily report's, *payroll June*;
+ * 4. commands: *done* on task notices, *test pdf*, *proceed* on a PO, the daily report's, *payroll June*;
  * 5. anything else -> the pre-resolver, then the tool loop, in the audience scope.ts builds.
  */
 
@@ -326,6 +326,8 @@ export async function routeMessage(
   if (reportCommand !== undefined) return reportCommand
   const hrCommand = await handleHrCommand(deps, message, chatKind, speaker, text)
   if (hrCommand !== undefined) return hrCommand
+  const proceeded = await handleProceedText(deps, message, chatKind, speaker, text)
+  if (proceeded !== undefined) return proceeded
   const decided = await handleApprovalText(deps, message, chatKind, speaker, text)
   if (decided !== undefined) return decided
 

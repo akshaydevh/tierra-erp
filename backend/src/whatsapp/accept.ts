@@ -1,9 +1,10 @@
 import { safeEqual } from '../auth/cookie'
 import type { AgentDeps } from '../agent/handle-message'
+import { CONFIDENCE_FLOOR } from '../agent/classifiers'
 import { incomingJob } from '../jobs/worker'
 import { requeueTaskNotices } from '../tasks/notify'
 import { isBotEcho } from './brand'
-import { enrichIdentity, learnIdentities } from './identity'
+import { enrichIdentity, learnIdentities, learnParticipants, unmappedMentions } from './identity'
 import {
   audienceFor,
   isGroupJid,
@@ -28,6 +29,41 @@ async function audienceOptions(deps: AgentDeps, message: IncomingMessage): Promi
 async function isMappedGroupPdf(deps: AgentDeps, message: IncomingMessage): Promise<boolean> {
   if (!message.pdf || message.fromMe || message.control || message.reaction || !isGroupJid(message.remoteJid)) return false
   return Boolean((await deps.store.getWaGroup(message.remoteJid))?.partyGroupId)
+}
+
+/**
+ * WhatsApp sends a group @mention as the member's LID. The first time the bot's own LID (or anyone's) shows up
+ * unmapped, learn the group's members from Evolution so the mention resolves to a phone.
+ */
+async function withGroupMembers(deps: AgentDeps, message: IncomingMessage): Promise<IncomingMessage | null> {
+  if (!isGroupJid(message.remoteJid) || (await unmappedMentions(deps.store, message)).length === 0) return null
+  const participants = await deps.evolution.fetchGroupParticipants(message.remoteJid).catch((error: unknown) => {
+    console.error('Could not fetch WhatsApp group members', error)
+    return []
+  })
+  if (participants.length === 0) return null
+  await learnParticipants(deps.store, participants)
+  return enrichIdentity(deps.store, message)
+}
+
+const NAMES_TIERRA = /\btierra\b/i
+
+/**
+ * A group message that names Tierra without a clear call ("Tierra Bot", "hey Tierra", an @mention): TypeSafe decides
+ * whether it speaks to the bot. Without a key, on a failure or when unsure it does not.
+ */
+async function calledByName(deps: AgentDeps, message: IncomingMessage): Promise<boolean> {
+  const text = message.text ?? ''
+  if (!deps.callClassifier || !isGroupJid(message.remoteJid) || !NAMES_TIERRA.test(text)) return false
+  if (message.control || message.reaction || isBotEcho(text) || (message.fromMe && deps.botMode === 'dedicated')) return false
+  try {
+    const group = (await deps.store.getWaGroup(message.remoteJid))?.subject ?? null
+    const answer = await deps.callClassifier({ text, group })
+    return answer.choice === 'call' && answer.confidence >= CONFIDENCE_FLOOR
+  } catch (error) {
+    console.error('call_intent (TypeSafe) failed; treating the message as chatter', error)
+    return false
+  }
 }
 
 function senderJid(message: IncomingMessage): string | null {
@@ -80,7 +116,7 @@ export async function acceptWebhook(
   if (event.type !== 'message') return { status: 200, body: { ok: true } }
 
   await learnIdentities(deps.store, event.message)
-  const message = await enrichIdentity(deps.store, event.message)
+  let message = await enrichIdentity(deps.store, event.message)
   const options = await audienceOptions(deps, message)
   let connection = await deps.store.getWhatsapp()
   let audience = audienceFor(message, connection.phoneNumber, options)
@@ -98,7 +134,15 @@ export async function acceptWebhook(
       audience = audienceFor(message, connection.phoneNumber, options)
     }
   }
+  if (audience === 'ignore') {
+    const resolved = await withGroupMembers(deps, event.message)
+    if (resolved) {
+      message = resolved
+      audience = audienceFor(message, connection.phoneNumber, options)
+    }
+  }
   if (audience === 'ignore' && (await isMappedGroupPdf(deps, message))) audience = 'group'
+  if (audience === 'ignore' && (await calledByName(deps, message))) audience = 'group'
   if (audience === 'ignore') return { status: 200, body: { ignored: true } }
   if (await deps.store.findMessage(message.id)) return { status: 200, body: { duplicate: true } }
   const queued = await deps.enqueue(incomingJob(withoutMedia(message), audience))

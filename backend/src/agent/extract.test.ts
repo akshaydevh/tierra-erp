@@ -51,6 +51,24 @@ describe('reading a received PDF as a purchase order', () => {
     expect(fetchMock).not.toHaveBeenCalled()
   })
 
+  it('lets TypeSafe decide whether a PDF is a customer PO, and falls back to the rule when it is unsure or down', async () => {
+    vi.stubGlobal('fetch', vi.fn())
+    const zmat = { pages: [ZMAT], creator: 'Form Z_MAT_POPRINT EN' }
+    const says = (choice: 'customer_po' | 'tierra_document' | 'other', confidence = 0.9) => async () => ({ choice, confidence })
+    expect(await readPoText(zmat, noKey, says('tierra_document'))).toMatchObject({ kind: 'not_po' })
+    expect(await readPoText(zmat, noKey, says('customer_po'))).toMatchObject({ kind: 'po', reader: 'z_mat_poprint' })
+    // a PO the rule misses (no "purchase order" wording) still goes to the reader when TypeSafe says it is one
+    const unworded = ZMAT.replace(/purchase\s+order/gi, 'P.O.')
+    expect(await readPoText({ pages: [unworded], creator: null }, noKey)).toMatchObject({ kind: 'not_po' })
+    expect(await readPoText({ pages: [unworded], creator: null }, noKey, says('customer_po'))).toMatchObject({ kind: 'po', reader: 'z_mat_poprint' })
+    // unsure or down: the rule decides
+    expect(await readPoText(zmat, noKey, says('other', 0.3))).toMatchObject({ kind: 'po' })
+    const down = async (): Promise<never> => {
+      throw new Error('TypeSafe did not answer within 10 s')
+    }
+    expect(await readPoText(zmat, noKey, down)).toMatchObject({ kind: 'po' })
+  })
+
   it('reads the Z_MAT_POPRINT layout without the model, even with no key', async () => {
     const fetchMock = vi.fn()
     vi.stubGlobal('fetch', fetchMock)

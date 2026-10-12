@@ -16,6 +16,7 @@ import { acceptWebhook } from '../whatsapp/accept'
 import type { EvolutionClient, MediaMessage } from '../whatsapp/evolution'
 import { parseWebhook } from '../whatsapp/parse'
 import { processPo, sendToGroup } from './po-to-so'
+import { pendingApprovals } from './so-approval'
 import { absorbStockAdjustments, syncWithSap } from './sap-sync'
 
 // PO -> TSO -> approval -> customer group on the synthetic SAP fixture plus the invented Northwind rows (test/northwind.ts).
@@ -85,6 +86,7 @@ async function world(name: string, extraSql = ''): Promise<World> {
       return { messageId: `${name}-m${n}` }
     },
     sendReaction: async () => undefined,
+    fetchGroupParticipants: async () => [],
     fetchAllGroups: async () => [{ id: GROUP, subject: 'Northwind – Tierra', size: 3 }],
     downloadMedia: async () => ({ base64: Buffer.from('%PDF-1.4 po').toString('base64'), mimeType: 'application/pdf', fileName: 'po.pdf' }),
   } as unknown as EvolutionClient
@@ -126,10 +128,13 @@ const react = (w: World, from: string, targetId: string, emoji: string, fromMe =
       message: { reactionMessage: { key: { id: targetId, remoteJid: `${from}@s.whatsapp.net`, fromMe: true }, text: emoji } },
     },
   })
-async function pdfFromAlex(w: World) {
+/** Alex sends a PO and, as every PO now waits for it, replies *proceed* to the summary that asks. */
+async function pdfFromAlex(w: World, { proceed = true } = {}) {
   const parsed = parseWebhook(dm(`pdf-${(seq += 1)}`, ALEX, { documentMessage: { mimetype: 'application/pdf', fileName: 'PO.pdf' } }))
   if (parsed.type !== 'message') throw new Error('expected a message')
   await handleIncoming(w.deps, parsed.message, 'personal')
+  const summary = w.sent.filter((row) => row.number === ALEX).at(-1)
+  if (proceed && summary?.text.includes('Shall I proceed with this PO?')) await text(w, ALEX, 'proceed', summary.id)
 }
 async function later(w: World, ms: number) {
   w.clock.at += ms
@@ -446,6 +451,59 @@ describe.skipIf(!pg)('PO -> TSO -> approval -> customer group', () => {
     expect(w.media.filter((row) => row.number === ALEX).map((row) => row.fileName)).toEqual(['TSO-26-27-0003-v1.pdf', 'TSO-26-27-0003-v1-annex.pdf'])
   })
 
+  it("reads Alex's own words about a waiting PO with TypeSafe, and goes ahead only when the words say yes", async () => {
+    const w = await world('po_proceed_words')
+    try {
+      const asked: string[] = []
+      let answer: { choice: 'proceed' | 'hold' | 'question' | 'other'; confidence: number } = { choice: 'proceed', confidence: 0.9 }
+      w.deps.proceedIntent = async ({ text }) => {
+        asked.push(text)
+        return answer
+      }
+      const status = async (poNo: string) => (await w.conn.store.findCustomerPosByNumber(poNo))[0]!.status
+      w.reading.value = { kind: 'po', po: poWith(2, '4400088881'), reader: 'llm' }
+      await pdfFromAlex(w, { proceed: false })
+      const summary = w.sent.filter((row) => row.number === ALEX).at(-1)!
+      expect(summary.text).toContain('Shall I proceed with this PO?')
+
+      // TypeSafe alone is not enough: the words doubt
+      await text(w, ALEX, 'not yet', summary.id)
+      expect(await status('4400088881')).toBe('awaiting_proceed')
+      answer = { choice: 'hold', confidence: 0.9 }
+      await text(w, ALEX, 'hold this one for now', summary.id)
+      expect(toAlex(w).at(-1)).toBe('OK, PO 4400088881 stays on hold. Reply *proceed* to it when you want to go ahead.')
+      // unsure: nothing happens
+      answer = { choice: 'proceed', confidence: 0.4 }
+      await text(w, ALEX, 'ok', summary.id)
+      expect(await status('4400088881')).toBe('awaiting_proceed')
+      answer = { choice: 'proceed', confidence: 0.9 }
+      await text(w, ALEX, 'yes please raise it', summary.id)
+      expect(toAlex(w).at(-1)).toBe('Going ahead with PO 4400088881. Raising the sales order now; the approval request follows with the SO PDF.')
+      expect(await status('4400088881')).toBe('checked')
+      expect(asked).toEqual(['not yet', 'hold this one for now', 'ok', 'yes please raise it'])
+
+      // a TSO waits for approval; a second PO arrives and pins Alex's chat, so a plain "yes" is about that PO
+      await later(w, 3_000)
+      expect((await pendingApprovals(w.deps)).length).toBe(1)
+      w.reading.value = { kind: 'po', po: poWith(3, '4400088882'), reader: 'llm' }
+      await pdfFromAlex(w, { proceed: false })
+      await text(w, ALEX, 'yes')
+      expect(toAlex(w).at(-1)).toContain('Going ahead with PO 4400088882.')
+      expect((await pendingApprovals(w.deps)).length).toBe(1)
+
+      // with nothing pinned, a TSO and a PO both waiting: a plain "yes" picks neither
+      w.reading.value = { kind: 'po', po: poWith(4, '4400088883'), reader: 'llm' }
+      await pdfFromAlex(w, { proceed: false })
+      await w.conn.sql`delete from chat_context`
+      await text(w, ALEX, 'yes')
+      expect(toAlex(w).at(-1)).toBe('More than one thing is waiting for you. Reply to the PO message (*proceed*) or the sales order message you mean.')
+      expect(await status('4400088883')).toBe('awaiting_proceed')
+      expect((await pendingApprovals(w.deps)).filter((row) => row.status === 'pending').length).toBeGreaterThan(0)
+    } finally {
+      await w.conn.close()
+    }
+  })
+
   it('records two copies of one PO arriving together as two revisions instead of failing a turn', async () => {
     w.reading.value = { kind: 'po', po: poWith(2, '4400099996'), reader: 'llm' }
     const message = (id: string) => {
@@ -455,7 +513,7 @@ describe.skipIf(!pg)('PO -> TSO -> approval -> customer group', () => {
     }
     await Promise.all([handleIncoming(w.deps, message('race-1'), 'personal'), handleIncoming(w.deps, message('race-2'), 'personal')])
     expect((await w.conn.store.findCustomerPosByNumber('4400099996')).map((row) => [row.revision, row.status]).sort()).toEqual([
-      [1, 'checked'],
+      [1, 'awaiting_proceed'],
       [2, 'awaiting_proceed'],
     ])
   })

@@ -9,7 +9,7 @@ import { seedIfEmpty } from '../db/seed'
 import type { PublicUser } from '../db/types'
 import type { ExtractedPo, PoRead } from '../domain/po'
 import { inlineEnqueue, runDueJobs } from '../jobs/worker'
-import { confirmPoReview, reviewPo } from './po-intake'
+import { confirmPoReview, proceedWithPo, reviewPo } from './po-intake'
 import { dataBrief } from '../queries/brief'
 import { connect, runMigrations, startPostgres, type Connection } from '../test/postgres'
 import { FakeModel, callTool, say, useTools } from '../test/fake-llm'
@@ -84,6 +84,7 @@ describe.skipIf(!pg)('PO intake on the synthetic SAP fixture', () => {
       },
       sendMedia: async () => ({ messageId: `media-${Math.random().toString(36).slice(2)}` }),
       sendReaction: async () => undefined,
+      fetchGroupParticipants: async () => [],
       fetchAllGroups: async () => [
         { id: GROUP, subject: 'Northwind – Tierra', size: 3 },
         { id: UNMAPPED, subject: 'New buyer chat', size: 2 },
@@ -189,7 +190,7 @@ describe.skipIf(!pg)('PO intake on the synthetic SAP fixture', () => {
     expect(unmapped.body).toEqual({ ignored: true })
   })
 
-  it('checks a new PO from the desk: pass with incoming, handed on to the sales order', async () => {
+  it('checks a new PO from the desk: pass with incoming, asks Alex, and on *proceed* hands it to the sales order', async () => {
     reading = { kind: 'po', po: northwindPo(), reader: 'llm' }
     const reply = await desk('', true)
     expect(reply).toContain('PO 4400099999 (NW, 20-Mar, ₹52,920.00), ship-to T9QA → ZN05 Northwind Kalamassery DC.')
@@ -201,10 +202,13 @@ describe.skipIf(!pg)('PO intake on the synthetic SAP fixture', () => {
     expect(reply).toContain('Oil ZOILP 45: OK')
     expect(reply).toContain('Warnings: Tape ZPMTP 0.72: free 0, short 0.72, nothing on order; Consumable ZCSRIB 0.07')
     expect(reply).toContain('Verdict: *pass with incoming* (ZPMCN5, ZFLSALT arrive on open purchase orders)')
-    expect(reply).toContain('Raising the sales order now; the approval request follows with the SO PDF.')
+    expect(reply).toContain('Shall I proceed with this PO? Reply *proceed* and I will raise the sales order.')
     const [po] = await conn.store.findCustomerPosByNumber('4400099999')
-    expect(po).toMatchObject({ status: 'checked', revision: 1, repeatOf: [] })
+    expect(po).toMatchObject({ status: 'awaiting_proceed', revision: 1, repeatOf: [] })
     expect((await conn.store.latestInventoryCheck(po!.id))?.verdict).toBe('pass_with_incoming')
+    expect(await conn.store.findSalesOrderForPo(po!.id)).toBeNull()
+    expect(await desk('proceed')).toBe('Going ahead with PO 4400099999. Raising the sales order now; the approval request follows with the SO PDF.')
+    expect((await conn.store.getCustomerPo(po!.id))?.status).toBe('checked')
 
     // the same PO again is a repeat of the one received here: the next revision, waiting for *proceed*
     const again = await desk('', true)
@@ -283,10 +287,11 @@ describe.skipIf(!pg)('PO intake on the synthetic SAP fixture', () => {
     const reviewed = await reviewPo(deps, po!.id, { cardCode: 'ZN05' })
     expect(reviewed).toMatchObject({ cardCode: 'ZN05', partyName: 'Northwind', status: 'needs_review' })
     const confirmed = await confirmPoReview(deps, po!.id)
-    expect(confirmed.po.status).toBe('checked')
-    expect(confirmed.next).toBe('Raising the sales order now; the approval request follows with the SO PDF.')
-    expect(confirmed.summary).toContain('Confirmed by the office. Raising the sales order now')
+    expect(confirmed.po.status).toBe('awaiting_proceed')
+    expect(confirmed.next).toBe('Shall I proceed with this PO? Reply *proceed* and I will raise the sales order.')
+    expect(confirmed.summary).toContain('Confirmed by the office. Shall I proceed with this PO?')
     expect((await conn.store.listTasks()).find((task) => task.subjectId === po!.id && task.kind === 'review')?.status).toBe('done')
+    expect(await proceedWithPo(deps, po!.id)).toBe('Going ahead with PO 4400066666. Raising the sales order now; the approval request follows with the SO PDF.')
     await runDueJobs(deps, new Date('2026-04-01T06:01:00Z'))
     expect((await conn.store.findSalesOrderForPo(po!.id))?.cardCode).toBe('ZN05')
   })
@@ -321,8 +326,8 @@ describe.skipIf(!pg)('PO intake on the synthetic SAP fixture', () => {
     const fixed = await reviewPo(deps, po!.id, { lines: [{ lineNo: 1, itemCode: 'zfgn500' }] })
     expect(fixed.lines[0]).toMatchObject({ itemCode: 'ZFGN500', matchMethod: 'manual', matchConfirmed: true, pcs: 360, pcsSource: 'npu', unitPrice: 140 })
     const confirmed = await confirmPoReview(deps, po!.id)
-    expect(confirmed.po.status).toBe('checked')
-    await expect(confirmPoReview(deps, po!.id)).rejects.toThrow('is checked, not waiting for review')
+    expect(confirmed.po.status).toBe('awaiting_proceed')
+    await expect(confirmPoReview(deps, po!.id)).rejects.toThrow('is awaiting proceed, not waiting for review')
   })
 
   it('never loses a PO when intake breaks halfway: the row it made goes to review with the error, and the office has a task', async () => {

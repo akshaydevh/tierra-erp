@@ -7,6 +7,7 @@ import type { EvolutionClient } from '../whatsapp/evolution'
 import type { FileStore } from '../files/store'
 import type { BotMode } from '../whatsapp/parse'
 import type { ApprovalIntentClassifier } from './approval-intent'
+import type { CallClassifier, ProceedClassifier } from './classifiers'
 import type { ChatModel } from './llm'
 
 export type AgentDeps = {
@@ -24,6 +25,10 @@ export type AgentDeps = {
   chatModel: ChatModel
   /** TypeSafe's reading of an unclear admin message about a pending sales order; null without TYPESAFE_API_KEY (the chat model is used instead). */
   approvalIntent?: ApprovalIntentClassifier | null
+  /** TypeSafe's call on whether a group message that names Tierra speaks to the bot; null without TYPESAFE_API_KEY (rules only). */
+  callClassifier?: CallClassifier | null
+  /** TypeSafe's reading of the admin's own words about a PO waiting for *proceed*; null without TYPESAFE_API_KEY (only *proceed* works). */
+  proceedIntent?: ProceedClassifier | null
   /** Queues background work (WhatsApp turns, task notices). False when that idempotency key was already queued. */
   enqueue: (job: NewJob) => Promise<boolean>
   botMode: BotMode

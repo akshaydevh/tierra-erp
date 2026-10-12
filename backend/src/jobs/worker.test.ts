@@ -29,6 +29,7 @@ function fakeEvolution(sent: Array<{ number: string; text: string }>, gate: Gate
     sendMedia: async () => ({ messageId: null }),
     downloadMedia: async () => ({ base64: '', mimeType: 'application/pdf', fileName: 'x.pdf' }),
     fetchOwnerPhone: async () => null,
+    fetchGroupParticipants: async () => [],
     fetchAllGroups: async () => [],
     ensureWebhook: async () => undefined,
   }

@@ -1,4 +1,5 @@
 import type { Store } from '../db/store'
+import type { GroupParticipant } from './evolution'
 import type { IncomingMessage } from './parse'
 import { phoneDigits } from './qr'
 
@@ -34,6 +35,23 @@ export async function learnIdentities(store: IdentityStore, message: IncomingMes
     const phone = phoneDigits([first, second].find(isPhoneJid))
     if (lid && phone.length >= 8) await store.saveIdentity(lidKey(lid), phone)
   }
+}
+
+/** Remembers the LID and phone of each group member that Evolution lists with both. */
+export async function learnParticipants(store: IdentityStore, participants: GroupParticipant[]): Promise<void> {
+  for (const { lid, phoneJid } of participants) {
+    const phone = phoneDigits(phoneJid)
+    if (lid && phone.length >= 8) await store.saveIdentity(lidKey(lid), phone)
+  }
+}
+
+/** Mentioned LIDs with no known phone yet. */
+export async function unmappedMentions(store: IdentityStore, message: IncomingMessage): Promise<string[]> {
+  const unmapped: string[] = []
+  for (const jid of message.mentionedJids.filter(isLid)) {
+    if (!(await store.phoneForLid(lidKey(jid)))) unmapped.push(jid)
+  }
+  return unmapped
 }
 
 async function phoneJidFor(store: IdentityStore, lid: string): Promise<string | null> {

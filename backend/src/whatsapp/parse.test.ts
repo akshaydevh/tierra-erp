@@ -335,6 +335,16 @@ describe('audienceFor', () => {
     expect(audienceFor(mention, BOT)).toBe('group')
   })
 
+  it('answers Tierra called by name, not a sentence about the company', () => {
+    const say = (body: string) => audienceFor(text({ remoteJid: GROUP, fromMe: false, participant: JOSHY_LID }, body), BOT)
+    for (const call of ['hey tierra', 'Hi Tierra, any update?', 'Tierra?', 'tierra, what is pending', 'Tierra show stock', 'what is pending, Tierra?', '@Tierra status', 'TierraBot status']) {
+      expect(say(call), call).toBe('group')
+    }
+    for (const chatter of ['Tierra Foods dispatched it', 'tierra is late again', 'send the PO to Tierra', 'lunch?']) {
+      expect(say(chatter), chatter).toBe('ignore')
+    }
+  })
+
   it('ignores control messages', () => {
     const revoke = parsed({
       key: { id: 'C1', remoteJid: JOSHY, fromMe: false },

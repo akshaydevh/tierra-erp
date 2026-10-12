@@ -327,9 +327,15 @@ async function partyLabelFor(deps: Deps, customer: ResolvedCustomer, cardCode: s
   return alias?.alias ?? customer.cardName
 }
 
+/** What the admin is asked under the summary of a checked PO that waits for *proceed*. */
+export function proceedQuestion(check: InventoryCheck): string {
+  const then = check.verdict === 'fail' ? 'hold it for the short materials and task the manager' : 'raise the sales order'
+  return `Shall I proceed with this PO? Reply *proceed* and I will ${then}.`
+}
+
 /**
  * Records a read PO and checks it. Status: needs_review when the customer or a line is not resolved; else
- * awaiting_proceed for a repeat; else short (fail) or, through onPoChecked, checked.
+ * awaiting_proceed: every PO waits for the admin's *proceed* (a repeat says so in its summary) before onPoChecked.
  */
 export async function intakePo(deps: FlowDeps, read: { po: ExtractedPo; reader: PoReader }, source: PoSource): Promise<IntakeOutcome> {
   const { po } = read
@@ -381,7 +387,7 @@ export async function intakePo(deps: FlowDeps, read: { po: ExtractedPo; reader: 
   let created: CustomerPo | null = null
   for (let attempt = 0; !created; attempt += 1) {
     try {
-      created = await record(problems.length ? 'needs_review' : repeats.hits.length ? 'awaiting_proceed' : 'received')
+      created = await record(problems.length ? 'needs_review' : 'awaiting_proceed')
     } catch (error) {
       if (!(error instanceof CustomerPoRevisionTakenError) || attempt >= REVISION_RETRIES) throw error
       repeats = await findRepeats(deps, po, customer)
@@ -401,10 +407,10 @@ export async function intakePo(deps: FlowDeps, read: { po: ExtractedPo; reader: 
 
   let next: string | null = null
   let po2 = created
-  if (status === 'received' && check) {
-    next = await onPoChecked(deps, created, check)
-    po2 = (await deps.store.getCustomerPo(created.id)) ?? created
-  } else if (status === 'received' && !check) {
+  if (status === 'awaiting_proceed' && check) {
+    // a repeat's summary already asks for *proceed* on its repeat line
+    if (!repeats.hits.length) next = proceedQuestion(check)
+  } else if (status === 'awaiting_proceed' && !check) {
     po2 = (await deps.store.updateCustomerPo(created.id, { status: 'needs_review', reviewReason: 'The lines could not be checked.' })) ?? created
   }
   const partyLabel = await partyLabelFor(deps, customer, po2.cardCode)
@@ -431,8 +437,8 @@ function requestedOf(po: CustomerPo): CheckRequest[] | null {
 }
 
 /**
- * The admin's *proceed* on a repeat PO: continue as if it were new. The PO waited, so stock may have moved: it is
- * checked again now and the TSO (or the hold) follows from the fresh check. Returns the reply.
+ * The admin's *proceed* on a PO (a repeat or a new one). The PO waited, so stock may have moved: it is checked
+ * again now and the TSO (or the hold) follows from the fresh check. Returns the reply.
  */
 export async function proceedWithPo(deps: FlowDeps, customerPoId: string): Promise<string> {
   const po = await deps.store.getCustomerPo(customerPoId)
@@ -675,8 +681,8 @@ export async function reviewPo(deps: Deps, customerPoId: string, input: ReviewIn
 
 /**
  * "Confirm and check" (C3): the office has set the customer and confirmed every line. The PO is checked again for
- * repeats and stock and carries on exactly as a fresh one: a repeat waits for the admin's *proceed*, otherwise
- * onPoChecked raises the TSO (or holds it short). The office's review tasks are closed and the admin gets the summary.
+ * repeats and stock and carries on exactly as a fresh one: it waits for the admin's *proceed*, which raises the TSO
+ * (or holds it short). The office's review tasks are closed and the admin gets the summary.
  * Returns the PO, its check and the note of what happens next.
  */
 export async function confirmPoReview(
@@ -693,19 +699,13 @@ export async function confirmPoReview(
   const repeats = po.poNo ? await findRepeats(deps, asRead(po), customer) : { hits: [], revision: po.revision }
   const hits = repeats.hits.filter((hit) => hit.customerPoId !== po.id)
   const check = await runInventoryCheck(deps, requestedOf(po)!, { customerPoId: po.id, kind: 'po', createdBy: null })
-  let updated =
+  const updated =
     (await deps.store.updateCustomerPo(po.id, {
-      status: hits.length ? 'awaiting_proceed' : 'received',
+      status: 'awaiting_proceed',
       reviewReason: null,
       repeatOf: hits,
     })) ?? po
-  let next: string
-  if (hits.length) {
-    next = 'It repeats an earlier order: reply *proceed* to go ahead anyway.'
-  } else {
-    next = await onPoChecked(deps, updated, check)
-    updated = (await deps.store.getCustomerPo(po.id)) ?? updated
-  }
+  const next = hits.length ? 'It repeats an earlier order: reply *proceed* to go ahead anyway.' : proceedQuestion(check)
   for (const task of (await deps.store.listTasks()).filter(
     (row) => row.subjectType === 'customer_po' && row.subjectId === po.id && row.kind === 'review' && (row.status === 'todo' || row.status === 'doing'),
   )) {

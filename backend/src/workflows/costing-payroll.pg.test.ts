@@ -61,6 +61,7 @@ describe.skipIf(!pg)('costing and payroll (synthetic fixtures)', () => {
       },
       sendMedia: async () => ({ messageId: `out-m-${++seq}` }),
       sendReaction: async () => undefined,
+      fetchGroupParticipants: async () => [],
       fetchAllGroups: async () => [],
     } as unknown as EvolutionClient
     deps = {

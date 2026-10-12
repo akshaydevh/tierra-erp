@@ -3,6 +3,7 @@ import { drizzle, type PostgresJsDatabase } from 'drizzle-orm/postgres-js'
 import postgres from 'postgres'
 import { readPurchaseOrder } from './agent/extract'
 import { createApprovalIntent } from './agent/approval-intent'
+import { createCallClassifier, createPdfClassifier, createProceedClassifier } from './agent/classifiers'
 import { createChatModel } from './agent/llm'
 import { createApp, type AppDeps } from './app'
 import { DrizzleStore } from './db/drizzle-store'
@@ -45,15 +46,18 @@ async function main() {
   const files = createFileStore(env.fileStore, env.s3)
   const fileWarning = fileStoreWarning(files, env.production)
   if (fileWarning) console.warn(`\n${'!'.repeat(100)}\n${fileWarning}\n${'!'.repeat(100)}\n`)
+  const pdfClassifier = createPdfClassifier(env)
   const deps: AppDeps = {
     store,
     evolution: new HttpEvolution(env),
     sapSql: sql,
     files,
-    readPurchaseOrder: (pdf) => readPurchaseOrder(pdf, env),
+    readPurchaseOrder: (pdf) => readPurchaseOrder(pdf, env, pdfClassifier),
     dataBrief: () => dataBrief(sql, store),
     chatModel: createChatModel(env),
     approvalIntent: createApprovalIntent(env),
+    callClassifier: createCallClassifier(env),
+    proceedIntent: createProceedClassifier(env),
     enqueue: async (job) => Boolean(await store.enqueueJob(job)),
     botMode: env.botMode,
     now: () => new Date(),

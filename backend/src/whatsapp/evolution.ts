@@ -30,6 +30,12 @@ export type WhatsappGroup = {
   size: number
 }
 
+/** A group member's LID and phone JID; Baileys 7 lists each member under one and names the other. */
+export type GroupParticipant = {
+  lid: string | null
+  phoneJid: string | null
+}
+
 export interface EvolutionClient {
   createInstance(): Promise<{ qrBase64: string | null }>
   deleteInstance(): Promise<void>
@@ -39,6 +45,7 @@ export interface EvolutionClient {
   downloadMedia(message: unknown): Promise<DownloadedMedia>
   fetchOwnerPhone(): Promise<string | null>
   fetchAllGroups(): Promise<WhatsappGroup[]>
+  fetchGroupParticipants(groupJid: string): Promise<GroupParticipant[]>
   /** Points the existing instance's webhook at this backend. */
   ensureWebhook(): Promise<void>
 }
@@ -93,6 +100,19 @@ export function groupsFrom(value: unknown): WhatsappGroup[] {
       (candidate): candidate is string => typeof candidate === 'string' && candidate.length > 0,
     )
     return [{ id, subject: subject ?? id, size: groupSize(row) }]
+  })
+}
+
+export function participantsFrom(value: unknown): GroupParticipant[] {
+  const root = record(value)
+  const rows = Array.isArray(root?.participants) ? root.participants : Array.isArray(value) ? value : []
+  return rows.flatMap((item) => {
+    const row = record(item)
+    if (!row) return []
+    const jids = [row.id, row.lid, row.phoneNumber, row.jid].filter((jid): jid is string => typeof jid === 'string')
+    const lid = jids.find((jid) => jid.endsWith('@lid')) ?? null
+    const phoneJid = jids.find((jid) => jid.endsWith('@s.whatsapp.net')) ?? null
+    return lid || phoneJid ? [{ lid, phoneJid }] : []
   })
 }
 
@@ -212,6 +232,11 @@ export class HttpEvolution implements EvolutionClient {
   async fetchAllGroups(): Promise<WhatsappGroup[]> {
     const data = await this.request(`/group/fetchAllGroups/${INSTANCE_NAME}?getParticipants=false`)
     return groupsFrom(data)
+  }
+
+  async fetchGroupParticipants(groupJid: string): Promise<GroupParticipant[]> {
+    const data = await this.request(`/group/participants/${INSTANCE_NAME}?groupJid=${encodeURIComponent(groupJid)}`)
+    return participantsFrom(data)
   }
 
   async fetchOwnerPhone(): Promise<string | null> {

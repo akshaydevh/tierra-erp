@@ -112,6 +112,27 @@ describe('HttpEvolution', () => {
     ])
   })
 
+  it('reads group members as LID and phone pairs, whichever one is the id', async () => {
+    const calls = mockFetch([
+      {
+        participants: [
+          { id: '140000000000001@lid', phoneNumber: '919800000001@s.whatsapp.net', admin: null },
+          { id: '919812345678@s.whatsapp.net', lid: '187654321098765@lid', admin: 'admin' },
+          { id: '140000000000003@lid' },
+        ],
+      },
+    ])
+    const members = await new HttpEvolution(env).fetchGroupParticipants('120363025246125486@g.us')
+    expect(calls[0]?.url).toBe(
+      'http://evolution.internal:8080/group/participants/tierra?groupJid=120363025246125486%40g.us',
+    )
+    expect(members).toEqual([
+      { lid: '140000000000001@lid', phoneJid: '919800000001@s.whatsapp.net' },
+      { lid: '187654321098765@lid', phoneJid: '919812345678@s.whatsapp.net' },
+      { lid: '140000000000003@lid', phoneJid: null },
+    ])
+  })
+
   it('points the webhook at the backend without deleting the instance', async () => {
     const calls = mockFetch([{ webhook: { enabled: true } }])
     await new HttpEvolution(env).ensureWebhook()

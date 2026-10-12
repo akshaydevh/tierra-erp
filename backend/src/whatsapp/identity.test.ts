@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { enrichIdentity, learnIdentities } from './identity'
+import { enrichIdentity, learnIdentities, learnParticipants, unmappedMentions } from './identity'
 import { parseWebhook, type IncomingMessage } from './parse'
 
 class FakeIdentities {
@@ -96,5 +96,22 @@ describe('enrichIdentity', () => {
   it('leaves unknown LIDs alone', async () => {
     const enriched = await enrichIdentity(new FakeIdentities(), message({ remoteJid: GROUP, participant: JOSHY_LID }))
     expect(enriched.participantAltJid).toBeNull()
+  })
+})
+
+describe('learnParticipants', () => {
+  it('maps member LIDs to phones and leaves unmapped mentions behind', async () => {
+    const store = new FakeIdentities()
+    const mentioned = message(
+      { remoteJid: GROUP, participant: JOSHY_LID },
+      { message: { extendedTextMessage: { text: '@555 status?', contextInfo: { mentionedJid: ['555@lid'] } } } },
+    )
+    expect(await unmappedMentions(store, mentioned)).toEqual(['555@lid'])
+    await learnParticipants(store, [
+      { lid: '555@lid', phoneJid: '919800000001@s.whatsapp.net' },
+      { lid: null, phoneJid: JOSHY },
+    ])
+    expect([...store.rows]).toEqual([['555@lid', '919800000001']])
+    expect(await unmappedMentions(store, mentioned)).toEqual([])
   })
 })

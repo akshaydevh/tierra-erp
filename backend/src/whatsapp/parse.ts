@@ -303,11 +303,22 @@ function exactOwner(phoneNumber: string | null, jid: string): boolean {
   return own.length >= 8 && phoneDigits(jid) === own
 }
 
-const BOT_NAME = /tierra\s+bot/i
+/**
+ * "Tierra Bot" anywhere, or Tierra called by name: "hey Tierra", "Tierra, …", "…, Tierra?", "@Tierra".
+ * A sentence about the company ("Tierra Foods dispatched it") is not a call.
+ */
+const BOT_CALLS = [
+  /tierra\s*bot/i,
+  /@tierra\b/i,
+  /\b(?:hey|hi+|hello|helo|hai|ok|okay|dear|yo)[\s,]+tierra\b/i,
+  /^\W*tierra\s*(?:[,:!?]|$)/i,
+  /^\W*tierra\s+(?:please|pls|plz|can|could|would|what|whats|how|show|send|check|give|tell|list|share|when|where|which|who|why)\b/i,
+  /,\s*tierra\W*$/i,
+]
 
 export function mentionsTierraBot(message: IncomingMessage, phoneNumber: string | null): boolean {
   const text = message.text ?? ''
-  if (BOT_NAME.test(text)) return true
+  if (BOT_CALLS.some((call) => call.test(text))) return true
   const phone = phoneDigits(phoneNumber)
   if (phone.length < 8) return false
   if (message.mentionedJids.some((jid) => phoneDigits(jid) === phone)) return true
