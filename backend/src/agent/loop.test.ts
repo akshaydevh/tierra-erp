@@ -192,7 +192,7 @@ describe('tool scope', () => {
   })
 
   it('keeps payroll, attendance and leave to the admin alone', () => {
-    const hr = ['payroll_summary', 'attendance', 'leave_requests']
+    const hr = ['payroll_summary', 'salary_payments', 'attendance', 'leave_requests']
     const joshy: Audience = { kind: 'internal', userId: 'usr_joshy', name: 'Joshy', role: 'manager' }
     for (const name of hr) {
       expect(toolsFor(alex).map((tool) => tool.name)).toContain(name)
@@ -204,7 +204,7 @@ describe('tool scope', () => {
 
   it('keeps finance and the daily report to the manager and the admin, and the daily inputs to the office and the admin', () => {
     const finance = ['bank_position', 'payments', 'party_balance', 'ageing', 'pending_payment_approvals', 'find_journal_entries', 'daily_report', 'production_cost', 'sku_margin', 'monthly_pnl']
-    const hr = ['payroll_summary', 'attendance', 'leave_requests']
+    const hr = ['payroll_summary', 'salary_payments', 'attendance', 'leave_requests']
     const joshy: Audience = { kind: 'internal', userId: 'usr_joshy', name: 'Joshy', role: 'manager' }
     const office = toolsFor(anju).map((tool) => tool.name)
     const manager = toolsFor(joshy).map((tool) => tool.name)

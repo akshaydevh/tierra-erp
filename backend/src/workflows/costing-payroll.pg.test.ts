@@ -4,7 +4,7 @@ import { routeMessage } from '../agent/route'
 import { seedIfEmpty } from '../db/seed'
 import { dataBrief } from '../queries/brief'
 import { costingKpis, materialMix, productionCost, productionCosts, skuMargins, stockValuation, wipVariance } from '../queries/costing'
-import { attendanceMonth, headcount, leaveSummary, payrollSummary, peelingMonth, reconciliation } from '../queries/payroll'
+import { attendanceMonth, headcount, leaveSummary, payrollSummary, peelingMonth, personPayments, reconciliation, salaryPayments } from '../queries/payroll'
 import { FakeModel, callTool, say, useTools, type SeenRequest } from '../test/fake-llm'
 import { connect, runMigrations, startPostgres, type Connection } from '../test/postgres'
 import { loadHrFixture, loadSapFixture } from '../test/sap'
@@ -284,6 +284,53 @@ describe.skipIf(!pg)('costing and payroll (synthetic fixtures)', () => {
     expect(attendance).toMatchObject({ people: 3, codes: { P: 2, LWP: 1 }, namesByCode: { LWP: ['Bala Nair'] } })
     expect(leave).toMatchObject({ count: 2, byStatus: [{ status: 'Approved', requests: 2 }] })
     expect(leave!.rows).toBeUndefined()
+  })
+
+  it('reads salary payments by month and cycle, names only when asked', async () => {
+    const all = await salaryPayments(conn.sql)
+    expect(all).toMatchObject({ from: '2026-02-01', to: '2026-03-01', total: 51400, payments: 3 })
+    expect(all.months).toEqual([
+      { month: '2026-02-01', total: 50200, byCycle: { advance: 1000, monthly_salary: 49200 } },
+      { month: '2026-03-01', total: 1200, byCycle: { tds: 1200 } },
+    ])
+    expect(all.payees).toBeUndefined()
+    expect((await salaryPayments(conn.sql, { cycle: 'advance' })).total).toBe(1000)
+    expect((await salaryPayments(conn.sql, { from: '2026-03-01', to: '2026-03-01' })).total).toBe(1200)
+    expect((await salaryPayments(conn.sql, { names: true })).payees).toEqual([
+      { name: 'Asha Kumar', employeeId: 'TF901', amount: 29000, payments: 1 },
+      { name: 'Bala', employeeId: null, amount: 20500, payments: 2 },
+      { name: 'Ela Temp', employeeId: 'TMP-001', amount: 500, payments: 1 },
+    ])
+    expect((await personPayments(conn.sql, { nameKey: 'bala' })).map((row) => [row.payDate, row.amount, row.forMonth])).toEqual([
+      ['2026-02-05', 20000, '2026-01-01'],
+      ['2026-02-14', 500, null],
+    ])
+  })
+
+  it('gives the admin salary payments as totals, and one person’s only when the message asks', async () => {
+    llm.script(useTools(callTool('salary_payments', { names: true })), say('ok'))
+    await send('how much salary did we pay out each month?', 'alex')
+    let [result] = toolResults(llm.last()!)
+    expect(result).toMatchObject({ period: 'February 2026 to March 2026', total: 51400, payments: 3 })
+    expect(result!.byMonth[0]).toEqual({ month: 'February 2026', total: 50200, 'Salary advance': 1000, 'Monthly salary': 49200 })
+    expect(result!.biggestPayees).toBeUndefined()
+    expect(result!.namesWithheld).toContain('only given when the admin asks')
+    for (const name of NAMES) expect(llm.transcript()).not.toContain(name)
+
+    llm.script(useTools(callTool('salary_payments', { employee: 'Asha Kumar' })), say('ok'))
+    await send('what was paid as salary for Asha Kumar?', 'alex')
+    ;[result] = toolResults(llm.last()!)
+    expect(result).toMatchObject({ person: 'Asha Kumar', total: 29000 })
+    expect(result!.payments).toEqual([{ date: '2026-02-05', amount: 29000, kind: 'Monthly salary', purpose: 'Jan Salary', salaryMonth: 'January 2026' }])
+
+    llm.script(useTools(callTool('salary_payments', { employee: 'Bala' })), say('ok'))
+    await send('payments made to Bala?', 'alex')
+    ;[result] = toolResults(llm.last()!)
+    expect(result).toEqual({ error: expect.stringContaining('only given when the admin asks') })
+
+    llm.script(useTools(callTool('salary_payments', {})), say('That is for the admin.'))
+    await send('salary payments last month?', 'joshy')
+    expect(llm.last()!.toolNames).not.toContain('salary_payments')
   })
 
   it('answers costing questions through the manager’s tools and keeps them from the office', async () => {

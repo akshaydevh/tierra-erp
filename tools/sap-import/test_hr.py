@@ -126,6 +126,26 @@ def write_folder(folder, *, voyon_net_total="60,259.00", register_office_total=2
         "Incentive summary": [["Temporaray ", "Total", None, "Permanent", "Total"], [], ["Ela Temp", 120, None, "Bala Nair", 200],
                               ["Total", 120, None, None, 200]],
     })
+    head = ["pay_date", "month", "name", "name_key", "amount", "purpose", "cycle", "sap_docnum", "sap_comment", "payment_total",
+            "source", "source_path"]
+    pdf = "sap_attachments/Attachments/Ewaybill/Payment-Aproval 03 MAR.pdf"
+    book(f / "payroll-series-2025-12-to-2026-03.xlsx", {
+        "Payroll lines": [
+            head,
+            [datetime(2026, 3, 3), "2026-03", "Asha Kumar", "ashakumar", 20000, "Jan Salary", "Monthly salary", 501, "Paid salary", 36300, "PDF text", pdf],
+            [datetime(2026, 3, 3), "2026-03", "Bala (Asha Kumar)", "bala", 16000, "Feb 26 Salary adv", "Salary advance", 501, "Paid salary", 36300, "PDF text", pdf],
+            [datetime(2026, 3, 3), "2026-03", "(not itemised – see sheet)", None, 300, "Paid salary", "Monthly salary", 501, "Paid salary", 36300, "PDF text – balancing line", pdf],
+            [datetime(2026, 3, 5), "2026-03", "Salary Advance paid to Ela Temp", "ela", 500, "Salary advance paid/Ela Temp-500,Chitra Das-500", "Salary advance", 502,
+             "Salary advance paid/Ela Temp-500,Chitra Das-500", 1000, "pairs typed into SAP comment", "sap_backup/parquet/OVPM.parquet DocNum 502"],
+            [datetime(2026, 3, 5), "2026-03", "Chitra Das", "chitra", 500, "Salary advance paid/Ela Temp-500,Chitra Das-500", "Salary advance", 502,
+             "Salary advance paid/Ela Temp-500,Chitra Das-500", 1000, "pairs typed into SAP comment", "sap_backup/parquet/OVPM.parquet DocNum 502"],
+            [datetime(2026, 3, 6), "2026-03", "(not itemised – see sheet)", None, 990, "Lunch for TN Peelers", "TN peeling (weekly, piece-rate)", 503,
+             "Lunch for TN Peelers", 990, "SAP payment only (no sheet)", "sap_backup/parquet/OVPM.parquet DocNum 503"],
+            [datetime(2026, 3, 9), "2026-03", "(not itemised – see sheet)", None, 1200, "TDS on salary", "TDS on salary", 504, "TDS on salary", 1200,
+             "SAP payment only (no sheet)", "sap_backup/parquet/OVPM.parquet DocNum 504"],
+        ],
+        "Monthly totals": [["Month", "Total"], ["2026-03", "=SUM(1)"]],
+    })
     book(f / "labour-cost.xlsx", {"Aug": [["rates"], [1, 2, 3]]})
     if joins_note:
         (f / "notes.txt").write_text("not a workbook")
@@ -147,6 +167,21 @@ class Helpers(unittest.TestCase):
         self.assertEqual(hr.month_in("SALARY REGISTER June  26- Peeling").isoformat(), "2026-06-01")
         self.assertEqual(hr.month_in("hr-payroll-voyon-2026-06").isoformat(), "2026-06-01")
         self.assertIsNone(hr.month_in("Attendance Sheet"))
+
+    def test_payment_names_and_months(self):
+        self.assertEqual(hr.payee_name("Salary paid to sreelaja"), ("sreelaja", None))
+        self.assertEqual(hr.payee_name("Sharook (Noufal)"), ("Sharook", "Noufal"))
+        self.assertEqual(hr.payee_name("Sep & Oct Abiya"), ("Abiya", None))
+        self.assertEqual(hr.payee_name("NO - Midhun"), ("Midhun", None))
+        self.assertEqual(hr.payee_name("(not itemised – see sheet)"), (None, None))
+        paid = datetime(2026, 3, 3).date()
+        self.assertEqual(hr.salary_month("July Salary", paid).isoformat(), "2025-07-01")
+        self.assertEqual(hr.salary_month("Mar salary", paid).isoformat(), "2026-03-01")
+        self.assertEqual(hr.salary_month("Apr salary", paid).isoformat(), "2025-04-01")      # not ahead of the payment
+        self.assertEqual(hr.salary_month("Apr salary adv", paid).isoformat(), "2026-04-01")  # an advance may be
+        self.assertEqual(hr.salary_month("Dec 24 salary", paid).isoformat(), "2024-12-01")
+        self.assertIsNone(hr.salary_month("Sep 24 and Oct 24 salary", paid))
+        self.assertIsNone(hr.salary_month("net pay", paid))
 
     def test_peeling_slabs(self):
         self.assertEqual(hr.slab_incentive(Decimal(170), "permanent"), Decimal("42.50"))
@@ -211,6 +246,36 @@ class Build(unittest.TestCase):
         self.assertEqual({p["worker_name"]: p["employee_id"] for p in ds["peeling"]}, {"Bala Nair": "TF902", "Ela Temp": "TMP-001"})
         self.assertEqual(len(ds["leaves"]), 2)
 
+        self.assertIn("salary payments 2026-03-03 .. 2026-03-09: 3 payments, 38,500.00", text)
+        self.assertIn("left out (not wages): 1 payments, 990.00", text)
+        self.assertTrue(g["salary payments (payroll-series-2025-12-to-2026-03.xlsx): lines = the SAP payment total"][0])
+        pays = {p["sap_doc_num"]: p for p in ds["payments"]}
+        self.assertEqual(sorted(pays), [501, 502, 504])
+        self.assertEqual((pays[501]["cycle"], pays[501]["itemised"], pays[501]["list_file"]),
+                         ("monthly_salary", False, "Payment-Aproval 03 MAR.pdf"))
+        self.assertEqual((pays[502]["cycle"], pays[502]["itemised"], pays[502]["list_file"]), ("advance", True, None))
+        self.assertEqual([l["cycle"] for l in ds["payment_lines"] if l["sap_doc_num"] == 501], ["monthly_salary", "advance", "monthly_salary"])
+        got = [(l["sap_doc_num"], l["name"], l["name_note"], l["employee_id"], l["amount"], str(l["for_month"]), l["how_read"])
+               for l in ds["payment_lines"]]
+        self.assertEqual(got, [
+            (501, "Asha Kumar", None, "TF901", Decimal("20000.00"), "2026-01-01", "pdf"),
+            (501, "Bala", "Asha Kumar", None, Decimal("16000.00"), "2026-02-01", "pdf"),   # an advance on a salary list   # a first name alone does not link
+            (501, None, None, None, Decimal("300.00"), "None", "balancing"),
+            (502, "Ela Temp", None, "TMP-001", Decimal("500.00"), "None", "sap_comment"),
+            (502, "Chitra Das", None, "TF903", Decimal("500.00"), "None", "sap_comment"),
+            (504, None, None, None, Decimal("1200.00"), "None", "none"),
+        ])
+
+    def test_payment_lines_that_miss_the_sap_total_fail_their_gate(self):
+        write_folder(self.folder)
+        wb = openpyxl.load_workbook(self.folder / "payroll-series-2025-12-to-2026-03.xlsx")
+        wb["Payroll lines"]["E2"] = 19000
+        wb.save(self.folder / "payroll-series-2025-12-to-2026-03.xlsx")
+        _, _, results = hr.build(args_for(self.folder, self.joins))
+        ok, detail = self.gates(results)["salary payments (payroll-series-2025-12-to-2026-03.xlsx): lines = the SAP payment total"]
+        self.assertFalse(ok)
+        self.assertIn("501 of 2026-03-03: 35300.00 vs 36300.00", detail)
+
     def test_a_total_that_does_not_add_up_fails_its_gate(self):
         write_folder(self.folder, voyon_net_total="61,000.00", register_office_total=28000)
         _, _, results = hr.build(args_for(self.folder, self.joins))
@@ -253,6 +318,7 @@ class EndToEnd(unittest.TestCase):
                              (3, Decimal("60259.00")))
             self.assertEqual(pg.execute("SELECT count(*) FROM hr.attendance_days").fetchone()[0], 9)
             self.assertIsNone(pg.execute("SELECT to_regnamespace('hr_next')").fetchone()[0])
+            self.assertEqual(pg.execute("SELECT count(*), sum(amount) FROM hr.salary_payment_lines").fetchone(), (6, Decimal("38500.00")))
         # a run whose totals do not add up leaves the loaded hr alone and keeps hr_next to look at
         write_folder(self.folder, voyon_net_total="1.00")
         self.assertEqual(hr.run(args_for(self.folder, self.joins, self.url, self.gates_file)), 1)

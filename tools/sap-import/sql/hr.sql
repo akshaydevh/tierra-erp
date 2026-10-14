@@ -134,4 +134,39 @@ CREATE TABLE {s}.peeling_output (
   PRIMARY KEY (month, row_no, work_date)
 );
 
+-- Salary and wage payments out of SAP (OVPM), split per person from the payment-approval list attached to each payment
+-- (the payroll-series workbook). What was PAID and when, not what was earned: a September payment usually settles
+-- August (for_month, read from the line's purpose), and advances and TDS are payments too. Never add these to
+-- payroll_lines. Non-wage spends the workbook files under peeling (lunch, tipper, auto charges) are left out.
+CREATE TABLE {s}.salary_payments (
+  pay_date      date NOT NULL,
+  sap_doc_num   integer NOT NULL,              -- OVPM DocNum: restarts each financial year, so it is one payment with pay_date
+  amount        numeric NOT NULL,              -- the SAP payment total; the lines add up to it
+  cycle         text NOT NULL,                 -- the cycle carrying most of its money (a salary list can carry advances)
+  memo          text,                          -- the SAP comment
+  itemised      boolean NOT NULL,              -- every rupee is on a named line
+  list_file     text,                          -- the attachment the names were read from
+  PRIMARY KEY (pay_date, sap_doc_num)
+);
+CREATE INDEX salary_payments_cycle_idx ON {s}.salary_payments (cycle, pay_date);
+
+CREATE TABLE {s}.salary_payment_lines (
+  pay_date      date NOT NULL,
+  sap_doc_num   integer NOT NULL,
+  line_no       integer NOT NULL,
+  name          text,                          -- NULL: the part of the payment no list names
+  name_key      text,
+  name_note     text,                          -- what the list put in brackets after the name (often whose account it went to)
+  employee_id   text,                          -- employees.employee_id or temp_workers.worker_id when the name is exactly one person
+  amount        numeric NOT NULL,
+  cycle         text NOT NULL,                 -- monthly_salary | advance | bonus_incentive | temp_packing | tn_peeling | sales_promotion | tds
+  purpose       text,
+  for_month     date,                          -- the salary month the purpose names ("July Salary"), when it names one
+  how_read      text NOT NULL,                 -- pdf | xlsx | sap_comment | balancing | none
+  PRIMARY KEY (pay_date, sap_doc_num, line_no),
+  FOREIGN KEY (pay_date, sap_doc_num) REFERENCES {s}.salary_payments (pay_date, sap_doc_num)
+);
+CREATE INDEX salary_payment_lines_employee_idx ON {s}.salary_payment_lines (employee_id);
+CREATE INDEX salary_payment_lines_name_idx ON {s}.salary_payment_lines (name_key);
+
 CREATE TABLE {s}._import (key text PRIMARY KEY, value text NOT NULL);

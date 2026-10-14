@@ -5,13 +5,19 @@ import {
   attendanceMonth,
   employeePay,
   findEmployees,
+  findPayees,
   hrMeta,
   hrOrNull,
   leaveSummary,
+  PAYMENT_CYCLE_LABELS,
+  PAYMENT_CYCLES,
   payrollSummary,
+  personPayments,
   reconciliation,
+  salaryPayments,
   type EmployeeMatch,
 } from '../../queries/payroll'
+import { round2 } from '../../queries/finance'
 import { isNotImported } from '../../queries/meta'
 import { NAMES_WITHHELD, namesAsked } from '../hr-gate'
 import { defineTool, isoDay, type ToolContext } from './types'
@@ -26,6 +32,9 @@ import { defineTool, isoDay, type ToolContext } from './types'
 const NOT_LOADED = { found: false, message: 'The HR files have not been imported on this server yet (run.py hr).' }
 const SAME_STAFF =
   'Voyon and the salary register are the same permanent staff (the register has a few more): never add them. Temporary workers are a separate sheet. Figures come from the HR files, not SAP.'
+
+const PAID_NOT_EARNED =
+  'Money actually paid (SAP salary payments, split per person from the approval lists), by payment date: a month\'s salary usually goes out the next month or later, and advances and TDS are payments too. Not the payroll (what was earned): never add the two. Names are as the lists spell them.'
 
 const monthArg = z.string().min(3).max(20).describe('A month: YYYY-MM, or as written ("June", "jun 2026", "last month"). Default: the latest on file.')
 const employeeArg = z.string().min(2).max(60).describe('One person: their employee code (TF905, T99, TFL0999) or name. Only when the message asks for that person.')
@@ -116,6 +125,72 @@ export const hrTools = [
           people: names ? summary.people?.map((line) => ({ name: line.name, code: line.code, payroll: line.source, category: line.category, net: line.net })) : undefined,
           namesWithheld: args.names && !names ? NAMES_WITHHELD : undefined,
           note: SAME_STAFF,
+        }
+      })
+    },
+  }),
+  defineTool({
+    name: 'salary_payments',
+    description:
+      'Salary and wage payments actually made, from Dec 2024 (SAP payments split per person from the approval lists): totals per month and per cycle (monthly salary, salary advance, bonus / incentive, temporary packing wages, TN peelers, sales promotion, TDS on salary). For trends in salary spend and arrears. What was paid when, not what was earned: payroll_summary has a month\'s payroll. With employee: that person\'s payments, each with the salary month it settled; names: the biggest payees (both only when the message asks for people).',
+    scope: 'internal',
+    roles: PAYROLL_ROLES,
+    args: z.object({
+      from: monthArg.optional().describe('First payment month (default: the first on file).'),
+      to: monthArg.optional().describe('Last payment month (default: the last on file).'),
+      cycle: z.enum(PAYMENT_CYCLES).optional().describe('Only this kind of payment.'),
+      employee: employeeArg.optional(),
+      names: namesArg,
+    }),
+    async run(ctx, args) {
+      return guarded(async () => {
+        const reference = ctx.dataAsOf ?? ctx.referenceDay
+        const from = args.from ? parseMonth(args.from, reference) : null
+        const to = args.to ? parseMonth(args.to, reference) : null
+        if ((args.from && !from) || (args.to && !to)) return { found: false, message: `"${args.from ?? args.to}" is not a month I can read.` }
+        if (args.employee) {
+          if (!namesAsked(ctx.question)) return { error: NAMES_WITHHELD }
+          const staff = await findEmployees(ctx.deps.sapSql, args.employee)
+          const spellings = staff.length === 1 ? [] : await findPayees(ctx.deps.sapSql, args.employee)
+          if (staff.length !== 1 && spellings.length === 0) return { error: `No payment names "${args.employee}".` }
+          if (staff.length !== 1 && new Set(spellings.map((row) => row.employeeId ?? row.nameKey)).size > 1) {
+            return {
+              error: `"${args.employee}" matches more than one name on the payment lists; ask with the full name or code.`,
+              matches: spellings.map((row) => `${row.name}: ${row.lines} payments, ₹${row.amount.toLocaleString('en-IN')}`),
+            }
+          }
+          const who = staff.length === 1 ? { employeeId: staff[0]!.employeeId } : { employeeId: spellings[0]!.employeeId, nameKey: spellings[0]!.nameKey }
+          const paid = await personPayments(ctx.deps.sapSql, who, { from, to })
+          return {
+            person: staff[0]?.name ?? spellings[0]!.name,
+            payments: paid.map((row) => ({
+              date: row.payDate,
+              amount: row.amount,
+              kind: PAYMENT_CYCLE_LABELS[row.cycle] ?? row.cycle,
+              purpose: row.purpose,
+              salaryMonth: row.forMonth ? monthLabel(row.forMonth) : undefined,
+            })),
+            total: round2(paid.reduce((sum, row) => sum + row.amount, 0)),
+            note: PAID_NOT_EARNED,
+          }
+        }
+        const names = Boolean(args.names) && namesAsked(ctx.question)
+        const found = await salaryPayments(ctx.deps.sapSql, { from, to, cycle: args.cycle ?? null, names })
+        if (!found.onFile.first) return { found: false, message: 'No salary payments on file (the payroll-series workbook has not been imported).' }
+        return {
+          period: `${monthLabel(found.from)} to ${monthLabel(found.to)}`,
+          onFile: `${monthLabel(found.onFile.first)} to ${monthLabel(found.onFile.last!)}`,
+          total: found.total,
+          payments: found.payments,
+          byKind: found.byCycle.map((row) => ({ kind: row.label, amount: row.amount, payments: row.payments })),
+          byMonth: found.months.map((row) => ({
+            month: monthLabel(row.month),
+            total: row.total,
+            ...Object.fromEntries(Object.entries(row.byCycle).map(([key, value]) => [PAYMENT_CYCLE_LABELS[key] ?? key, value])),
+          })),
+          biggestPayees: names ? found.payees?.map((row) => ({ name: row.name, amount: row.amount, payments: row.payments })) : undefined,
+          namesWithheld: args.names && !names ? NAMES_WITHHELD : undefined,
+          note: PAID_NOT_EARNED,
         }
       })
     },

@@ -15,7 +15,7 @@ import { handleHrCommand } from './hr-commands'
 import { isHrQuestion, withoutEmployeeCodes } from './hr-gate'
 
 /** The payroll tools: a turn that used them never gets SAP files attached. */
-const HR_TOOLS = new Set(['payroll_summary', 'attendance', 'leave_requests'])
+const HR_TOOLS = new Set(['payroll_summary', 'salary_payments', 'attendance', 'leave_requests'])
 import { generateDailyReport } from '../workflows/daily-report'
 import type { AgentDeps } from './deps'
 import { intakePdf } from './intake'

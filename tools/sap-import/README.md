@@ -129,13 +129,18 @@ sheets and headers, not by its name: the Voyon punch report (employee master: TF
 reporting officer), the Voyon payroll export (needs `YYYY-MM` in the file name, or `--month`), the Voyon leave report,
 the salary register (`Salary-*` sheets: one category each; the `ATTN` sheet: a code per person per day), the temporary
 workers' wages sheet (factory and sales-promotion blocks; month from the file name) and the peeling register (kg per
-worker per day, the incentive sheet and its summary). Anything else (the labour-cost matrix) is listed as skipped.
+worker per day, the incentive sheet and its summary) and the payroll-series workbook (a `Payroll lines` sheet: SAP
+salary / wage payments split per person from the approval PDFs attached to them, Dec 2024 on). Anything else (the
+labour-cost matrix) is listed as skipped.
 openpyxl opens them read-only for their cached values; macros and formulas never run.
 
 Schema `hr` (`sql/hr.sql`): `employees` (one row per person: Voyon code and register code joined, department,
 category), `temp_workers`, `attendance_days`, `leave_requests`, `payroll_runs` / `payroll_lines` (one run per source and
 month: `voyon`, `register`, `temp_sheet`; Voyon and the register are the same permanent staff, never add them),
-`peeling_output`, `_import`.
+`peeling_output`, `salary_payments` / `salary_payment_lines` (what was paid and when, by SAP payment: one line per
+name, its cycle and the salary month its purpose names; a salary list can carry advances. Not the payroll: never add
+them. Lunch, tipper and auto-hire payments the workbook files under peeling are left out, and names link to
+`employees` / `temp_workers` only when they are exactly one person, with matching initials), `_import`.
 
 The same person has a Voyon code (TF…) and a register code (T… / TFL…). Names join most of them (exact, then spelling
 drift: initials, h, y/i, words run together); the rest come from a local file, `~/tierra-data/hr-joins.yaml`
@@ -150,7 +155,8 @@ Gates (hard; a failure keeps `hr` as it was and leaves `hr_next` to inspect): ev
 adds up to the file's totals row; each salary-register sheet's nets add up to its totals row (a row with a broken
 `#REF!` code may not carry pay); the attendance grid's codes per person equal the sheet's own count columns; the
 temporary sheet's columns equal its totals; the peeling incentive per class equals the summary sheet; every payroll line
-names one person. Data checks with the real figures (headcount, June totals, code counts) go in the local gates file
+names one person; each salary payment's lines add up to its SAP total (soft: they are SAP's own outgoing payments in
+`erp.payments`, same DocNum, date and amount, when the database has them). Data checks with the real figures (headcount, June totals, code counts) go in the local gates file
 under `hr_checks` (`{s}` is the schema being checked); without it they print `skip`. `verify` checks the `hr` tables
 when the schema exists.
 

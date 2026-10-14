@@ -10,6 +10,8 @@ Reads every .xlsx / .xlsm in --dir and recognises each workbook by its sheets an
                     sheet (a code per person per day, with the sheet's own COUNTIF columns)
   temp_sheet        the temporary workers' wages sheet (factory block and sales-promotion block, names only)
   peeling           the peeling register: kg per worker per day, the incentive per day and the incentive summary
+  payment_series    the payroll-series workbook: SAP salary / wage payments split per person from the approval lists
+                    attached to them (what was paid and when; one line per name per payment)
 
 Anything else (the labour-cost matrix) is skipped and listed. The files are untrusted input: they are opened with
 openpyxl in read-only mode for their cached values; macros and formulas are never run.
@@ -180,6 +182,9 @@ def classify(book):
         return "register"
     if any(n.strip().lower() == "peeling banana" for n in names):
         return "peeling"
+    lines = next((n for n in names if n.strip().lower() == "payroll lines"), None)
+    if lines and find_row(book.head(lines, 3), "pay_date", "sap_docnum", "amount", "cycle") is not None:
+        return "payment_series"
     first = book.head(names[0])
     if find_row(first, "Employee ID", "Check In") is not None:
         return "voyon_attendance"
@@ -567,6 +572,118 @@ def parse_peeling(book):
                 source=source, rule_misses=rule_misses)
 
 
+PAYMENT_CYCLES = {"monthly salary": "monthly_salary", "salary advance": "advance", "bonus / incentive": "bonus_incentive",
+                  "temp packing gents (weekly, hourly)": "temp_packing", "tn peeling (weekly, piece-rate)": "tn_peeling",
+                  "sales promotion staff": "sales_promotion", "tds on salary": "tds"}
+# Spends the workbook files under a payroll cycle that are not pay: meals, waste carting, auto hire for late peeling.
+NOT_WAGES = re.compile(r"\blunch\b|tipper|peel\s*waste|auto\s*charge|late\s*peeling", re.I)
+MONTH_WORD = re.compile(r"\b([a-z]{3,9})\b[\s.\-']*(\d{2}|20\d\d)?(?!\d)")
+
+
+def payment_how_read(source, named):
+    s = (source or "").lower()
+    if "balancing" in s:
+        return "balancing"
+    if "companion" in s:
+        return "none"
+    if s.startswith("pdf text"):
+        return "pdf"
+    if s.startswith("xlsx"):
+        return "xlsx"
+    if s.startswith("pairs typed"):
+        return "sap_comment"
+    if s.startswith("sap payment only"):
+        return "sap_comment" if named else "none"
+    return None
+
+
+def payee_name(value):
+    """A list's name cell -> (name, note): 'Salary paid to sreelaja' -> sreelaja, 'Sharook (Noufal)' -> Sharook / Noufal,
+    'Sep & Oct Abiya' -> Abiya, 'NO - Midhun' -> Midhun. (None, None) for the not-itemised placeholder."""
+    s = text(value)
+    if not s or s.startswith("(not itemised"):
+        return None, None
+    s = re.sub(r"^.*\b(?:paid|given)\s+to\s+", "", s, flags=re.I)
+    s = re.sub(r"^no\s*[-.]\s*", "", s, flags=re.I)
+    words = s.split()
+    while words and (words[0].lower().strip(".-") in MONTHS or words[0] in ("&", "and")):
+        words.pop(0)
+    s = " ".join(words)
+    note = None
+    m = re.search(r"\(", s)
+    if m:
+        rest = s[m.end():].replace(")", " ")
+        note = " ".join(rest.split()) or None
+        s = s[:m.start()]
+    s = s.strip(" -'.,")
+    return (s, note) if name_key(s) else (None, None)
+
+
+def salary_month(purpose, paid):
+    """The one salary month a purpose names ('July Salary', 'Feb 26 Salary', 'Sep 24 and Oct 24 salary' -> None), the
+    year from the text or else the latest such month up to the payment (up to a month after it for an advance)."""
+    found = set()
+    ahead = 1 if re.search(r"\badv", str(purpose or ""), re.I) else 0
+    for word, year in MONTH_WORD.findall(str(purpose or "").lower()):
+        if word == "sept":
+            word = "sep"
+        if word not in MONTHS:
+            continue
+        mo = MONTHS[word]
+        y = int(year) + (2000 if len(year) == 2 else 0) if year else None
+        if y is None or not 2020 <= y <= paid.year + 1:
+            limit = paid.year * 12 + paid.month - 1 + ahead  # as year * 12 + (month - 1)
+            y = max(yy for yy in (paid.year - 1, paid.year, paid.year + 1) if yy * 12 + mo - 1 <= limit)
+        found.add(date(y, mo, 1))
+    return found.pop() if len(found) == 1 else None
+
+
+def parse_payment_series(book):
+    sheet = next(n for n in book.names if n.strip().lower() == "payroll lines")
+    rows = book.rows(sheet)
+    h = find_row(rows, "pay_date", "sap_docnum", "amount", "cycle")
+    col = columns(rows[h])
+    payments, excluded, problems = {}, {}, []
+    for i, row in enumerate(rows[h + 1:], h + 2):
+        paid, doc, amount = as_date(cell(row, col["pay_date"])), num(cell(row, col["sap_docnum"])), num(cell(row, col["amount"]))
+        if paid is None and doc is None:
+            continue
+        total = num(cell(row, col.get("payment_total")))
+        if paid is None or doc is None or amount is None or total is None:
+            problems.append(f"row {i}: no date, DocNum or amount")
+            continue
+        amount, total = amount.quantize(Decimal("0.01")), total.quantize(Decimal("0.01"))
+        memo = text(cell(row, col.get("sap_comment")))
+        cycle_text = text(cell(row, col["cycle"])) or ""
+        key = (paid, int(doc))
+        if NOT_WAGES.search(memo or "") or NOT_WAGES.search(text(cell(row, col.get("purpose"))) or ""):
+            excluded.setdefault(key, dict(memo=memo, amount=total))
+            continue
+        source = text(cell(row, col.get("source")))
+        path = text(cell(row, col.get("source_path"))) or ""
+        pay = payments.get(key)
+        if pay is None:
+            pay = payments[key] = dict(pay_date=paid, sap_doc_num=int(doc), amount=total, memo=memo, list_file=None, lines=[])
+        elif pay["amount"] != total:
+            problems.append(f"row {i}: DocNum {doc} of {paid} has two payment totals")
+        if path and not path.startswith("sap_backup"):
+            pay["list_file"] = pay["list_file"] or Path(path).name
+        name, note = payee_name(cell(row, col["name"]))
+        purpose = text(cell(row, col.get("purpose")))
+        cycle = PAYMENT_CYCLES.get(cycle_text.lower(), re.sub(r"[^a-z]+", "_", cycle_text.lower()).strip("_"))
+        pay["lines"].append(dict(name=name, name_key=name_key(name) if name else None, name_note=note, amount=amount,
+                                 cycle=cycle, cycle_text=cycle_text, purpose=purpose, for_month=salary_month(purpose, paid),
+                                 how_read=payment_how_read(source, bool(name)), source=source))
+    for pay in payments.values():
+        pay["itemised"] = all(l["name"] for l in pay["lines"])
+        by_cycle = collections.defaultdict(Decimal)
+        for l in pay["lines"]:
+            by_cycle[l["cycle"]] += l["amount"]
+        pay["cycle"] = max(by_cycle, key=by_cycle.get)
+    return dict(kind="payment_series", file=book.path.name, payments=list(payments.values()),
+                excluded=excluded, problems=problems)
+
+
 # --------------------------------------------------------------------------- the people
 
 def load_joins(path):
@@ -681,6 +798,23 @@ class People:
                 return hits[0]
         return None
 
+    def payee(self, name):
+        """A payment list's name -> one employee, else one temporary worker, else None. The lists often give a first
+        name only; that links only when it is a whole name on file, and initials must agree when both names have them
+        (Ajitha C is not Ajitha T)."""
+        initials = lambda n: {w for w in name_key(n).split() if len(w) == 1}  # noqa: E731
+        mine = initials(name)
+        pool = [e for e in self.emp.values() if not (mine and initials(e["name"]) and initials(e["name"]) != mine)]
+        for fn in (name_key, loose_key, compact_key):
+            key = fn(name)
+            hits = [e["employee_id"] for e in pool if fn(e["name"]) == key]
+            if len(hits) == 1:
+                return hits[0]
+            if hits:
+                return None
+        hits = [t["worker_id"] for t in self.temps.values() if t["name_key"] == name_key(name)]
+        return hits[0] if len(hits) == 1 else None
+
 
 # --------------------------------------------------------------------------- build
 
@@ -719,6 +853,8 @@ def build(args):
                 parsed[kind].append(parse_temp_sheet(book, fallback))
             elif kind == "peeling":
                 parsed[kind].append(parse_peeling(book))
+            elif kind == "payment_series":
+                parsed[kind].append(parse_payment_series(book))
         finally:
             book.close()
 
@@ -869,9 +1005,52 @@ def build(args):
         gates.append((f"peeling {pl['month']:%Y-%m}: the slab rule reproduces the incentive sheet", "soft",
                       pl["rule_misses"] == 0, f"{pl['rule_misses']} worker-days differ (incentive from the {pl['source']})"))
 
+    payments, payment_lines, payment_report = {}, [], []
+    for ps in parsed["payment_series"]:
+        gates.append((f"salary payments ({ps['file']}): every row read", "hard", not ps["problems"],
+                      f"{len(ps['payments'])} payments" + (f"; {len(ps['problems'])} problems: {ps['problems'][:3]}" if ps["problems"] else "")))
+        off = []
+        for pay in ps["payments"]:
+            key = (pay["pay_date"], pay["sap_doc_num"])
+            if key in payments:
+                raise HrError(f"two files give SAP payment {pay['sap_doc_num']} of {pay['pay_date']}")
+            payments[key] = pay
+            got = sum((l["amount"] for l in pay["lines"]), Decimal(0))
+            if abs(got - pay["amount"]) > TOLERANCE:
+                off.append(f"{pay['sap_doc_num']} of {pay['pay_date']}: {got} vs {pay['amount']}")
+            for n, l in enumerate(pay["lines"], 1):
+                l.update(pay_date=pay["pay_date"], sap_doc_num=pay["sap_doc_num"], line_no=n,
+                         employee_id=people.payee(l["name"]) if l["name"] else None)
+                payment_lines.append(l)
+        gates.append((f"salary payments ({ps['file']}): lines = the SAP payment total", "hard", not off,
+                      f"{len(ps['payments'])} payments, {sum(p['amount'] for p in ps['payments']):,.2f}"
+                      + (f"; {len(off)} off: {off[:3]}" if off else "")))
+        unknown = sorted({l["cycle_text"] for p in ps["payments"] for l in p["lines"] if l["cycle_text"].lower() not in PAYMENT_CYCLES})
+        gates.append((f"salary payments ({ps['file']}): known cycles", "soft", not unknown,
+                      "all cycles known" if not unknown else f"unknown {unknown}"))
+        unread = sorted({l["source"] for p in ps["payments"] for l in p["lines"] if l["how_read"] is None})
+        gates.append((f"salary payments ({ps['file']}): known line sources", "hard", not unread,
+                      "all known" if not unread else f"unknown {unread}"))
+        if ps["excluded"]:
+            payment_report.append(f"  left out (not wages): {len(ps['excluded'])} payments, "
+                                  f"{sum(e['amount'] for e in ps['excluded'].values()):,.2f} (lunch, tipper, auto charges)")
+    if payments:
+        pays = list(payments.values())
+        named = [l for l in payment_lines if l["name"]]
+        payment_report.insert(0, (
+            f"salary payments {min(p['pay_date'] for p in pays)} .. {max(p['pay_date'] for p in pays)}: {len(pays)} payments, "
+            f"{sum(p['amount'] for p in pays):,.2f}; {len(payment_lines)} lines, named {sum(l['amount'] for l in named):,.2f} "
+            f"({len({l['name_key'] for l in named})} spellings, {sum(1 for l in named if l['employee_id'])} lines linked to a person), "
+            f"salary month read on {sum(1 for l in payment_lines if l['for_month'])}"))
+        by_cycle = collections.defaultdict(Decimal)
+        for l in payment_lines:
+            by_cycle[l["cycle"]] += l["amount"]
+        payment_report.insert(1, "  by cycle: " + "; ".join(f"{k} {v:,.0f}" for k, v in sorted(by_cycle.items(), key=lambda kv: -kv[1])))
+
     people.resolve_officers()
     dataset = dict(employees=list(people.emp.values()), temp_workers=list(people.temps.values()), runs=runs, lines=lines,
-                   attendance=attendance, leaves=leaves, peeling=peeling)
+                   attendance=attendance, leaves=leaves, peeling=peeling, payments=list(payments.values()),
+                   payment_lines=payment_lines)
     no_emp = [l for l in lines if not l.get("employee_id")]
     gates.append(("every payroll line names one person", "hard", not no_emp, f"{len(lines)} lines"
                   + (f"; {len(no_emp)} without" if no_emp else "")))
@@ -918,6 +1097,7 @@ def build(args):
         linked = sum(1 for w in pl["workers"] if people.peeler(w["name"], w["class"]))
         report.append(f"peeling {pl['month']:%Y-%m}: {len(pl['workers'])} rows ({linked} linked to a person), "
                       + "; ".join(f"{c} {kg[c]:,.0f} kg, incentive {inc[c]:,.2f}" for c in sorted(kg)))
+    report += payment_report
     return dataset, report, gates
 
 
@@ -959,6 +1139,11 @@ def write(pg, schema, ds, info):
         copy_rows(cur, f"{schema}.peeling_output",
                   ["month", "row_no", "worker_name", "name_key", "worker_class", "employee_id", "work_date", "kg", "incentive"],
                   ds["peeling"])
+        copy_rows(cur, f"{schema}.salary_payments",
+                  ["pay_date", "sap_doc_num", "amount", "cycle", "memo", "itemised", "list_file"], ds["payments"])
+        copy_rows(cur, f"{schema}.salary_payment_lines",
+                  ["pay_date", "sap_doc_num", "line_no", "name", "name_key", "name_note", "employee_id", "amount", "cycle", "purpose",
+                   "for_month", "how_read"], ds["payment_lines"])
         cur.executemany(f"INSERT INTO {schema}._import (key, value) VALUES (%s, %s)", list(info.items()))
 
 
@@ -994,6 +1179,19 @@ def data_checks(pg, schema, gates_file):
     return out
 
 
+def sap_payment_check(pg, schema):
+    """The salary payments against SAP's own outgoing payments, when this database has them (erp.payments)."""
+    if pg.execute("SELECT to_regclass('erp.payments')").fetchone()[0] is None:
+        return [("salary payments = SAP payments (erp.payments)", "soft", None, "no erp schema here")]
+    total, missing = pg.execute(f"""
+        SELECT count(*), count(*) FILTER (WHERE NOT EXISTS (
+          SELECT 1 FROM erp.payments e WHERE e.direction = 'out' AND NOT e.cancelled AND e.doc_num = p.sap_doc_num
+            AND e.doc_date = p.pay_date AND e.amount = p.amount))
+        FROM {schema}.salary_payments p""").fetchone()
+    return [("salary payments = SAP payments (erp.payments)", "soft", missing == 0,
+             f"{total - missing}/{total} found with the same date and amount")]
+
+
 def run(args):
     dataset, report, gates = build(args)
     log("\n".join(report))
@@ -1006,10 +1204,13 @@ def run(args):
         "imported_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "months": json.dumps(sorted({f"{r['month']:%Y-%m}" for r in dataset["runs"]})),
         "runs": json.dumps([r["run_id"] for r in dataset["runs"]]),
+        "payments": json.dumps([f"{min(p['pay_date'] for p in dataset['payments'])}",
+                                f"{max(p['pay_date'] for p in dataset['payments'])}"] if dataset["payments"] else []),
     }
     with psycopg.connect(args.pg, autocommit=True) as pg:
         with pg.transaction():
             write(pg, "hr_next", dataset, info)
+        gates += sap_payment_check(pg, "hr_next")
         gates += data_checks(pg, "hr_next", args.gates)
         print_gates(gates)
         if any(ok is False and kind == "hard" for _, kind, ok, _ in gates):

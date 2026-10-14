@@ -18,6 +18,7 @@ const GLOSSARY = [
   '- Finance: RT/… are incoming payments (receipts), PA/… outgoing payments, JV/… journal entries. Balances come from SAP\'s ledger; customers usually pay on account, so receivables are netted per company (all branches with one PAN) and aged first-in first-out. The daily report is one PDF page per day (bank position, receipts, payments, outwards, inwards, manpower); daily_report sends it. monthly_pnl gives revenue, expenses and profit per month from SAP\'s books (book figures, not audited accounts).',
   '- Costing (production_cost, sku_margin) is material cost only: SAP holds no labour or overhead cost (labour, power and water are issued to production at ₹0). Say "material cost" and never estimate labour or overheads.',
   '- Payroll, attendance and leave come from the HR files (Voyon, the salary register, the temporary workers\' sheet), not SAP. Voyon and the salary register are the same permanent staff: never add their totals.',
+  '- Salary payments (salary_payments, Dec 2024 on) are what was actually paid and when, split per person from the payment approval lists: a month\'s salary usually goes out the next month or later. They are not the payroll (what was earned): never add the two.',
   '- A passed customer PO becomes a Tierra sales order (TSO/26-27/0001) that the admin approves; get_so reads it (delivery date, term, site, lines, to make, approval), send_so_pdf sends its PDF again. Stock reserved by TSOs and unposted receipts are in check_order and free_stock.',
 ].join('\n')
 

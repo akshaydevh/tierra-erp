@@ -47,3 +47,17 @@ INSERT INTO hr.peeling_output (month, row_no, worker_name, name_key, worker_clas
   ('2026-02-01', 30, 'Ela Temp', 'ela temp', 'temporary', 'TMP-001', '2026-02-03', 100, 0);
 
 INSERT INTO hr._import (key, value) VALUES ('imported_at', '2026-03-02T04:00:00Z'), ('months', '["2026-02"]');
+
+-- Salary payments (invented): January's pay going out in February, an advance, a list line no one names, TDS in March.
+INSERT INTO hr.salary_payments (pay_date, sap_doc_num, amount, cycle, memo, itemised, list_file) VALUES
+  ('2026-02-05', 901, 49200, 'monthly_salary', 'Paid salary', false, 'Payment-Aproval 05 FEB.pdf'),
+  ('2026-02-14', 902, 1000, 'advance', 'Salary advance paid/Ela Temp-500,Bala-500', true, NULL),
+  ('2026-03-07', 903, 1200, 'tds', 'TDS on salary', false, NULL);
+
+INSERT INTO hr.salary_payment_lines (pay_date, sap_doc_num, line_no, name, name_key, name_note, employee_id, amount, cycle, purpose, for_month, how_read) VALUES
+  ('2026-02-05', 901, 1, 'Asha Kumar', 'asha kumar', NULL, 'TF901', 29000, 'monthly_salary', 'Jan Salary', '2026-01-01', 'pdf'),
+  ('2026-02-05', 901, 2, 'Bala', 'bala', 'Asha Kumar', NULL, 20000, 'monthly_salary', 'Jan Salary', '2026-01-01', 'pdf'),
+  ('2026-02-05', 901, 3, NULL, NULL, NULL, NULL, 200, 'monthly_salary', 'Paid salary', NULL, 'balancing'),
+  ('2026-02-14', 902, 1, 'Ela Temp', 'ela temp', NULL, 'TMP-001', 500, 'advance', 'Salary advance paid', NULL, 'sap_comment'),
+  ('2026-02-14', 902, 2, 'Bala', 'bala', NULL, NULL, 500, 'advance', 'Salary advance paid', NULL, 'sap_comment'),
+  ('2026-03-07', 903, 1, NULL, NULL, NULL, NULL, 1200, 'tds', 'TDS on salary', NULL, 'none');

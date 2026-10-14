@@ -495,3 +495,152 @@ export async function employeePay(sql: SapSql, employeeId: string, month: string
     where r.month = ${month}::date and l.employee_id = ${employeeId} order by r.source`
   return rows.map(payLine)
 }
+
+// ------------------------------------------------------------------------------------------ salary payments
+
+export const PAYMENT_CYCLE_LABELS: Record<string, string> = {
+  monthly_salary: 'Monthly salary',
+  advance: 'Salary advance',
+  bonus_incentive: 'Bonus / incentive',
+  temp_packing: 'Temporary packing wages',
+  tn_peeling: 'TN peelers (weekly)',
+  sales_promotion: 'Sales promotion staff',
+  tds: 'TDS on salary',
+}
+
+export const PAYMENT_CYCLES = Object.keys(PAYMENT_CYCLE_LABELS) as [string, ...string[]]
+
+export type SalaryPayments = {
+  from: string
+  to: string
+  /** The first and last payment month on file. */
+  onFile: { first: string | null; last: string | null }
+  total: number
+  payments: number
+  /** payments: those with lines of that kind (a salary list can carry advances, so these overlap). */
+  byCycle: Array<{ cycle: string; label: string; amount: number; payments: number }>
+  months: Array<{ month: string; total: number; byCycle: Record<string, number> }>
+  /** The biggest payees in the range, only when asked for names. */
+  payees?: Array<{ name: string; employeeId: string | null; amount: number; payments: number }>
+}
+
+/**
+ * What was actually paid (SAP salary / wage payments, split per person from the approval lists: hr.salary_payments),
+ * by month and cycle, in [from, to] (months, YYYY-MM-01). Not what was earned: a month's pay usually goes out the next
+ * month, advances and TDS are payments too. Never add these to the payrolls.
+ */
+export async function salaryPayments(
+  sql: SapSql,
+  range: { from?: string | null; to?: string | null; cycle?: string | null; names?: boolean } = {},
+): Promise<SalaryPayments> {
+  const [bounds] = await sql`select min(date_trunc('month', pay_date))::date as first, max(date_trunc('month', pay_date))::date as last from hr.salary_payments`
+  const first = day(bounds?.first)
+  const last = day(bounds?.last)
+  const from = range.from ?? first ?? '1900-01-01'
+  const to = range.to ?? last ?? from
+  const end = nextMonth(to)
+  const cycle = range.cycle ?? null
+  const [rows, [count], payees] = await Promise.all([
+    sql`
+      select date_trunc('month', pay_date)::date as month, cycle, sum(amount) as amount, count(distinct (pay_date, sap_doc_num)) as payments
+      from hr.salary_payment_lines
+      where pay_date >= ${from}::date and pay_date < ${end}::date and (${cycle}::text is null or cycle = ${cycle})
+      group by 1, 2 order by 1, 2`,
+    sql`
+      select count(distinct (pay_date, sap_doc_num)) as n from hr.salary_payment_lines
+      where pay_date >= ${from}::date and pay_date < ${end}::date and (${cycle}::text is null or cycle = ${cycle})`,
+    range.names
+      ? sql`
+          select coalesce(e.name, t.name, min(l.name)) as name, l.employee_id, sum(l.amount) as amount, count(distinct (l.pay_date, l.sap_doc_num)) as payments
+          from hr.salary_payment_lines l
+          left join hr.employees e on e.employee_id = l.employee_id left join hr.temp_workers t on t.worker_id = l.employee_id
+          where l.name is not null and l.pay_date >= ${from}::date and l.pay_date < ${end}::date and (${cycle}::text is null or l.cycle = ${cycle})
+          group by l.employee_id, case when l.employee_id is null then l.name_key end, e.name, t.name
+          order by 3 desc limit 15`
+      : Promise.resolve(null),
+  ])
+  const months = new Map<string, { month: string; total: number; byCycle: Record<string, number> }>()
+  const cycles = new Map<string, { amount: number; payments: number }>()
+  for (const row of rows) {
+    const month = day(row.month)!
+    const amount = num(row.amount)
+    const entry = months.get(month) ?? { month, total: 0, byCycle: {} }
+    entry.total = round2(entry.total + amount)
+    entry.byCycle[String(row.cycle)] = round2(amount)
+    months.set(month, entry)
+    const c = cycles.get(String(row.cycle)) ?? { amount: 0, payments: 0 }
+    c.amount += amount
+    c.payments += num(row.payments)
+    cycles.set(String(row.cycle), c)
+  }
+  const byCycle = [...cycles.entries()]
+    .map(([key, c]) => ({ cycle: key, label: PAYMENT_CYCLE_LABELS[key] ?? key, amount: round2(c.amount), payments: c.payments }))
+    .sort((a, b) => b.amount - a.amount)
+  return {
+    from,
+    to,
+    onFile: { first, last },
+    total: round2(byCycle.reduce((sum, c) => sum + c.amount, 0)),
+    payments: num(count?.n),
+    byCycle,
+    months: [...months.values()],
+    payees: payees?.map((row) => ({ name: String(row.name), employeeId: text(row.employee_id), amount: round2(num(row.amount)), payments: num(row.payments) })),
+  }
+}
+
+export type PersonPayment = {
+  payDate: string
+  sapDocNum: number
+  name: string
+  amount: number
+  cycle: string
+  purpose: string | null
+  forMonth: string | null
+}
+
+export type Payee = { name: string; nameKey: string; employeeId: string | null; lines: number; amount: number }
+
+/** Names on the payment lists that look like the query (each spelling once), for finding one person's payments. */
+export async function findPayees(sql: SapSql, query: string): Promise<Payee[]> {
+  const words = query.toLowerCase().replace(/[^a-z ]+/g, ' ').trim()
+  if (words.length < 3) return []
+  const rows = await sql`
+    select min(name) as name, name_key, employee_id, count(*) as lines, sum(amount) as amount
+    from hr.salary_payment_lines where name_key like ${`%${words.split(/\s+/).join('%')}%`}
+    group by name_key, employee_id order by 5 desc limit 10`
+  return rows.map((row) => ({
+    name: String(row.name),
+    nameKey: String(row.name_key),
+    employeeId: text(row.employee_id),
+    lines: num(row.lines),
+    amount: round2(num(row.amount)),
+  }))
+}
+
+/** One person's payments: by employee id (every spelling linked to them), else by one list spelling. */
+export async function personPayments(
+  sql: SapSql,
+  who: { employeeId?: string | null; nameKey?: string | null },
+  range: { from?: string | null; to?: string | null } = {},
+): Promise<PersonPayment[]> {
+  const from = range.from ?? '1900-01-01'
+  const end = range.to ? nextMonth(range.to) : '2999-01-01'
+  const employeeId = who.employeeId ?? null
+  const nameKey = employeeId ? null : (who.nameKey ?? null)
+  if (!employeeId && !nameKey) return []
+  const rows = await sql`
+    select l.pay_date, l.sap_doc_num, l.name, l.amount, l.cycle, l.purpose, l.for_month
+    from hr.salary_payment_lines l
+    where (l.employee_id = ${employeeId} or (l.employee_id is null and l.name_key = ${nameKey}))
+      and l.pay_date >= ${from}::date and l.pay_date < ${end}::date
+    order by l.pay_date, l.sap_doc_num, l.line_no`
+  return rows.map((row) => ({
+    payDate: day(row.pay_date)!,
+    sapDocNum: num(row.sap_doc_num),
+    name: String(row.name),
+    amount: round2(num(row.amount)),
+    cycle: String(row.cycle),
+    purpose: text(row.purpose),
+    forMonth: day(row.for_month),
+  }))
+}
