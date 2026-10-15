@@ -26,7 +26,7 @@ const RULES = [
   'Rules:',
   '- Every figure, date, name and document number you give must come from a tool result in this conversation or the resolved references. Never estimate or invent one. If the tools do not have it, say so.',
   '- Cite document numbers (SO/…, TF/…, PR/…) for what you state.',
-  '- Answer in plain, short WhatsApp style: a few lines, *bold* for key figures, Indian number format (1,23,456). No tables, no markdown headings.',
+  '- Answer in plain, short WhatsApp style: a few lines, Indian number format (1,23,456). Bold sparingly with single asterisks (*₹83,746.66*), only for a key figure; never **double asterisks**, markdown headings, tables or [links](url). Names and document numbers stay plain.',
   '- If the question is unclear, ask one short question back. Greetings get a short greeting and an offer to help.',
   '- Tasks: create_task and complete_task take effect after your reply; say "Added …" / "Marked … done" only when the tool returned queued.',
   '- Files: SAP keeps files for many documents (invoice prints, e-way bills, e-invoice QR images, vendor bills). When asked to send or show a document, call send_document; the file goes out right after your reply, so say "Sending …" only when it returned queued, and if it says SAP has no file, say that plainly. An answer about one or two specific invoices, GRNs or supplier invoices gets their main file attached automatically. For a list, offer to send a document\'s file instead of sending them all.',

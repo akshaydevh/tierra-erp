@@ -1,3 +1,4 @@
+import { whatsappText } from './format'
 import { ownerPhoneFromInstances, qrFromPayload } from './qr'
 
 export const INSTANCE_NAME = 'tierra'
@@ -191,7 +192,8 @@ export class HttpEvolution implements EvolutionClient {
     })
   }
 
-  async sendText(number: string, text: string, mentionPhones: string[] = []): Promise<SentText> {
+  async sendText(number: string, raw: string, mentionPhones: string[] = []): Promise<SentText> {
+    const text = whatsappText(raw)
     const mentioned = mentionPhones.filter((phone) => phone.length > 0).map((phone) => `${phone}@s.whatsapp.net`)
     const data = await this.request(`/message/sendText/${INSTANCE_NAME}`, {
       method: 'POST',
@@ -220,7 +222,7 @@ export class HttpEvolution implements EvolutionClient {
           mediatype: media.mediatype,
           mimetype: media.mimetype,
           fileName: media.fileName,
-          caption: media.caption,
+          caption: media.caption === undefined ? undefined : whatsappText(media.caption),
           media: mediaPayload(media.media),
         }),
       },
