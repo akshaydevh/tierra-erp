@@ -75,6 +75,85 @@ function DueChip({ task, now }: { task: Task; now: Date }) {
   return <span className={open && today ? 'pill amber' : 'pill grey'}>Due {when}</span>
 }
 
+type TaskDialogProps = {
+  task: Task
+  now: Date
+  accounts: AccountLink[]
+  holders: RoleHolders | null
+  onAssign: (assignment: Assignment) => void
+  onCancel: () => void
+  onClose: () => void
+}
+
+function TaskDialog({ task, now, accounts, holders, onAssign, onCancel, onClose }: TaskDialogProps) {
+  const ref = useRef<HTMLDialogElement>(null)
+
+  useEffect(() => {
+    const dialog = ref.current
+    if (dialog && !dialog.open) dialog.showModal()
+    return () => dialog?.close()
+  }, [])
+
+  return (
+    <dialog
+      ref={ref}
+      className="taskdialog"
+      aria-labelledby="taskdialog-title"
+      onClose={onClose}
+      // A click on the backdrop lands on the dialog element itself.
+      onClick={(event) => {
+        if (event.target === event.currentTarget) onClose()
+      }}
+    >
+      <div className="taskdialog-body">
+        <header className="taskdialog-head">
+          <h3 id="taskdialog-title">{task.title}</h3>
+          <button className="taskdialog-close" type="button" aria-label="Close" onClick={onClose}>
+            ×
+          </button>
+        </header>
+        <div className="taskchips">
+          <span className="pill grey">{TASK_STATUS_LABELS[task.status]}</span>
+          <span className="pill grey">{TASK_CATEGORY_LABELS[task.category]}</span>
+          {task.assigneeRole ? <span className="pill ink">{roleLabel(task.assigneeRole)}</span> : null}
+          <DueChip task={task} now={now} />
+          {task.notifiedAt ? (
+            <span className="pill ok" title={`Sent ${dateFormat.format(new Date(task.notifiedAt))}`}>
+              Sent on WhatsApp
+            </span>
+          ) : null}
+        </div>
+        {task.description ? (
+          <p className="taskdetail">{task.description}</p>
+        ) : (
+          <p className="taskdetail muted">No details.</p>
+        )}
+        {task.subjectType === 'document' && task.subjectId ? (
+          <a
+            className="tasklink"
+            href={`/api/documents/${encodeURIComponent(task.subjectId)}`}
+            target="_blank"
+            rel="noreferrer"
+          >
+            Open PDF
+          </a>
+        ) : null}
+        <div className="taskmeta">
+          <label className="taskassign">
+            <span>Assigned to</span>
+            <select value={assignmentValue(task)} onChange={(event) => onAssign(parseAssignment(event.target.value))}>
+              <AssignOptions accounts={accounts} holders={holders} />
+            </select>
+          </label>
+          <button className="taskcancel" type="button" onClick={onCancel}>
+            Cancel task
+          </button>
+        </div>
+      </div>
+    </dialog>
+  )
+}
+
 export function TaskBoard() {
   const [board, setBoard] = useState<Board | null>(null)
   const [title, setTitle] = useState('')
@@ -85,6 +164,7 @@ export function TaskBoard() {
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [over, setOver] = useState<TaskStatus | null>(null)
+  const [openId, setOpenId] = useState<string | null>(null)
   const dragPreview = useRef<HTMLElement | null>(null)
 
   useEffect(() => () => dragPreview.current?.remove(), [])
@@ -202,12 +282,14 @@ export function TaskBoard() {
 
   function cancelTask(task: Task) {
     if (!window.confirm(`Cancel "${task.title}"?`)) return
+    setOpenId(null)
     void patchTask(task.id, { status: 'cancelled' })
   }
 
   const now = new Date()
   const accounts = board?.accounts ?? []
   const holders = board?.holders ?? null
+  const openTask = board?.tasks.find((task) => task.id === openId) ?? null
 
   return (
     <div className="taskboard">
@@ -275,56 +357,36 @@ export function TaskBoard() {
                 key={task.id}
                 className="taskcard"
                 draggable
-                aria-label={task.title}
+                role="button"
+                tabIndex={0}
+                aria-haspopup="dialog"
+                aria-label={`Open task ${task.title}`}
+                onClick={() => setOpenId(task.id)}
+                onKeyDown={(event) => {
+                  if (event.key !== 'Enter' && event.key !== ' ') return
+                  event.preventDefault()
+                  setOpenId(task.id)
+                }}
                 onDragStart={(event) => startDrag(task, event)}
                 onDragEnd={endDrag}
               >
                 <b>{task.title}</b>
-                {task.description ? <p className="taskdetail">{task.description}</p> : null}
-                {task.subjectType === 'document' && task.subjectId ? (
-                  <a
-                    className="tasklink"
-                    href={`/api/documents/${encodeURIComponent(task.subjectId)}`}
-                    target="_blank"
-                    rel="noreferrer"
-                  >
-                    Open PDF
-                  </a>
-                ) : null}
-                <div className="taskchips">
-                  <span className="pill grey">{TASK_CATEGORY_LABELS[task.category]}</span>
-                  {task.assigneeRole ? <span className="pill ink">{roleLabel(task.assigneeRole)}</span> : null}
-                  <DueChip task={task} now={now} />
-                  {task.notifiedAt ? (
-                    <span className="pill ok" title={`Sent ${dateFormat.format(new Date(task.notifiedAt))}`}>
-                      Sent on WhatsApp
-                    </span>
-                  ) : null}
-                </div>
-                <div className="taskmeta">
-                  <label className="taskassign">
-                    <span className="sr">Assign {task.title} to</span>
-                    <select
-                      value={assignmentValue(task)}
-                      onChange={(event) => void patchTask(task.id, parseAssignment(event.target.value))}
-                    >
-                      <AssignOptions accounts={accounts} holders={holders} />
-                    </select>
-                  </label>
-                  <button
-                    className="taskcancel"
-                    type="button"
-                    aria-label={`Cancel task ${task.title}`}
-                    onClick={() => cancelTask(task)}
-                  >
-                    Cancel
-                  </button>
-                </div>
               </article>
             ))}
           </section>
         ))}
       </div>
+      {openTask ? (
+        <TaskDialog
+          task={openTask}
+          now={now}
+          accounts={accounts}
+          holders={holders}
+          onAssign={(assignment) => void patchTask(openTask.id, assignment)}
+          onCancel={() => cancelTask(openTask)}
+          onClose={() => setOpenId(null)}
+        />
+      ) : null}
     </div>
   )
 }

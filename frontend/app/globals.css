@@ -679,6 +679,29 @@ td .sub { font-size: 12px; color: var(--inksoft); margin-top: 2px; }
   cursor: grab;
   user-select: none;
 }
+.taskcard:hover { box-shadow: var(--sh-sm), inset 0 0 0 1px var(--line); }
+.taskcard:focus-visible { outline: 2px solid var(--ink); outline-offset: 1px; }
+.taskdialog {
+  width: min(560px, calc(100vw - 32px));
+  max-height: calc(100vh - 64px);
+  margin: auto;
+  padding: 0;
+  border: none;
+  border-radius: 18px;
+  background: var(--paper);
+  color: var(--ink);
+  box-shadow: var(--sh);
+}
+.taskdialog::backdrop { background: rgba(14, 44, 28, 0.35); }
+.taskdialog-body { display: flex; flex-direction: column; gap: 14px; padding: 24px; }
+.taskdialog-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.taskdialog-head h3 { font-size: 17px; font-weight: 700; line-height: 1.35; }
+.taskdialog-close { flex: none; width: 32px; height: 32px; border-radius: 8px; font-size: 22px; line-height: 1; color: var(--inksoft); }
+.taskdialog-close:hover { background: var(--bone); color: var(--ink); }
+.taskdialog .taskdetail { font-size: 14px; white-space: pre-line; }
+.taskdialog .taskmeta { padding-top: 14px; border-top: 1px solid var(--line); }
+.taskdialog .taskassign { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600; color: var(--inksoft); }
+.taskdialog .taskassign select { max-width: 220px; }
 .taskcard-drag-preview {
   position: fixed;
   top: 0;
