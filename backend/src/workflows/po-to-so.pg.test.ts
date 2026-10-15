@@ -202,12 +202,12 @@ describe.skipIf(!pg)('PO -> TSO -> approval -> customer group', () => {
     const tasks = await w.conn.store.listTasks()
     const procurement = tasks.find((task) => task.kind === 'procurement')!
     expect(procurement).toMatchObject({
-      title: 'Complete procurement for TSO/26-27/0001 — expedite ZPMCN5 (4 nos short now), ZFLSALT (1.44 kg short now); make 360 × ZFGN500',
+      title: 'Follow up 2 materials and start production for NW order TSO/26-27/0001',
       assigneeName: 'Joshy',
       subjectType: 'sales_order',
       subjectId: order!.id,
     })
-    expect(toJoshy(w).map((row) => row.text)).toEqual([expect.stringContaining('*Complete procurement for TSO/26-27/0001')])
+    expect(toJoshy(w).map((row) => row.text)).toEqual([expect.stringContaining('*Follow up 2 materials and start production for NW order TSO/26-27/0001')])
     const requests = await w.conn.store.listProcurementRequests({ subjectId: order!.id })
     expect(requests.map((row) => [row.reason, row.itemCode, row.qty]).sort()).toEqual([
       ['expedite', 'ZFLSALT', 1.44],
@@ -418,8 +418,8 @@ describe.skipIf(!pg)('PO -> TSO -> approval -> customer group', () => {
     expect(po.status).toBe('short')
     expect(await w.conn.store.findSalesOrderForPo(po.id)).toBeNull()
     const hold = (await w.conn.store.listTasks()).find((task) => task.subjectId === po.id && task.kind === 'procurement')!
-    expect(hold.title).toBe('Procure for PO 4400099997 (NW) — short ZPMLMN 27.15 kg, ZOILP 226.25 after incoming; expedite ZPMCN5, ZFLSALT')
-    const notice = toJoshy(w).find((row) => row.text.includes('Procure for PO 4400099997'))!
+    expect(hold.title).toBe('Arrange materials for NW PO 4400099997 (on hold)')
+    const notice = toJoshy(w).find((row) => row.text.includes('Arrange materials for NW PO 4400099997'))!
     expect((await w.conn.store.listProcurementRequests({ subjectId: po.id })).map((row) => [row.reason, row.itemCode]).sort()).toEqual([
       ['expedite', 'ZFLSALT'],
       ['expedite', 'ZPMCN5'],
@@ -531,7 +531,7 @@ describe.skipIf(!pg)('PO -> TSO -> approval -> customer group', () => {
       expect(check.lines.find((line) => line.itemCode === 'ZPMLMN')).toMatchObject({ owner: 'customer', status: 'short', shortAfterIncoming: 5.7 })
       const tasks = (await w.conn.store.listTasks()).filter((task) => task.subjectId === po.id)
       expect(tasks.find((task) => task.kind === 'customer_followup')).toMatchObject({
-        title: 'Ask Northwind Kalamassery DC for ZPMLMN 5.7 kg (customer-supplied) — PO 4400099995',
+        title: 'Ask Northwind Kalamassery DC to send 1 material for PO 4400099995',
         assigneeName: 'Joshy',
       })
       const requests = await w.conn.store.listProcurementRequests({ subjectId: po.id })

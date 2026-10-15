@@ -204,12 +204,13 @@ async function raiseSalesOrder(deps: FlowDeps, po: CustomerPo, check: InventoryC
 
   const createdBy = raiser(accounts, po)
   if (createdBy) {
+    const party = await partyLabel(deps, order.partyGroupId, order.cardCode)
     await createTaskAndNotify(deps, {
-      title: procurementTaskTitle(order, check),
+      title: procurementTaskTitle(order, check, party),
       category: 'procurement',
       kind: 'procurement',
       assigneeRole: 'manager',
-      description: procurementTaskDescription(order, po, check, await partyLabel(deps, order.partyGroupId, order.cardCode)),
+      description: procurementTaskDescription(order, po, check, party),
       dueAt: po.deliveryDate ? new Date(`${po.deliveryDate}T10:00:00+05:30`) : null,
       subjectType: 'sales_order',
       subjectId: order.id,
@@ -290,7 +291,7 @@ async function holdShort(deps: FlowDeps, po: CustomerPo, check: InventoryCheck):
   if (shortageLines(check).length || expediteLines(check).length) {
     const party = await partyLabel(deps, po.partyGroupId, po.cardCode)
     await createTaskAndNotify(deps, {
-      title: shortHoldTitle(po, check, party),
+      title: shortHoldTitle(po, party),
       category: 'procurement',
       kind: 'procurement',
       assigneeRole: 'manager',
@@ -436,7 +437,7 @@ export async function renderForApproval(deps: FlowDeps, salesOrderId: string, ve
   const createdBy = raiser(accounts, po)
   if (createdBy && !approval.taskId) {
     const { task } = await createTaskAndNotify(deps, {
-      title: `Approve ${order.docNo} — ${await partyLabel(deps, order.partyGroupId, order.cardCode)}, ₹${new Intl.NumberFormat('en-IN', { minimumFractionDigits: 2 }).format(order.total)}`,
+      title: `Approve ${await partyLabel(deps, order.partyGroupId, order.cardCode)} sales order ${order.docNo} (₹${new Intl.NumberFormat('en-IN', { minimumFractionDigits: 2 }).format(order.total)})`,
       category: 'administration',
       kind: 'approval',
       assigneeRole: 'admin',

@@ -30,15 +30,20 @@ export function customerShortLines(check: InventoryCheck): InventoryCheckLine[] 
   )
 }
 
-export function procurementTaskTitle(order: SalesOrder, check: InventoryCheck): string {
-  const expedite = expediteLines(check).map((line) => `${line.itemCode} (${qty(line.shortNow)}${unit(line)} short now)`)
-  const make = makeText(check)
-  if (!expedite.length && !make.length) {
-    const fromStock = order.lines.map((line) => `${qty(line.pcs)} × ${line.itemCode}`).join(', ')
-    return `Reserve/dispatch from FG01: ${fromStock} (no purchase needed) — ${order.docNo}`
-  }
-  const parts = [expedite.length ? `expedite ${expedite.join(', ')}` : null, make.length ? `make ${make.join(' + ')}` : null]
-  return `Complete procurement for ${order.docNo} — ${parts.filter(Boolean).join('; ')}`
+/** "1 material" / "2 materials". */
+function materials(count: number): string {
+  return `${count} ${count === 1 ? 'material' : 'materials'}`
+}
+
+/** A short, readable heading; the item codes and quantities live in the description. */
+export function procurementTaskTitle(order: SalesOrder, check: InventoryCheck, party: string): string {
+  const expedite = expediteLines(check).length
+  const make = makeText(check).length
+  const what = `${party} order ${order.docNo}`
+  if (expedite && make) return `Follow up ${materials(expedite)} and start production for ${what}`
+  if (expedite) return `Follow up ${materials(expedite)} for ${what}`
+  if (make) return `Start production for ${what}`
+  return `Dispatch ${what} from stock`
 }
 
 function materialRow(line: InventoryCheckLine): string {
@@ -61,14 +66,8 @@ export function procurementTaskDescription(order: SalesOrder, po: CustomerPo | n
   return out.join('\n')
 }
 
-export function shortHoldTitle(po: CustomerPo, check: InventoryCheck, party: string): string {
-  const short = shortageLines(check).map((line) => `${line.itemCode} ${qty(line.shortAfterIncoming)}${unit(line)}`)
-  const expedite = expediteLines(check).map((line) => line.itemCode)
-  const parts = [
-    short.length ? `short ${short.join(', ')} after incoming` : null,
-    expedite.length ? `expedite ${expedite.join(', ')}` : null,
-  ]
-  return `Procure for PO ${po.poNo ?? '(no number)'} (${party}) — ${parts.filter(Boolean).join('; ')}`
+export function shortHoldTitle(po: CustomerPo, party: string): string {
+  return `Arrange materials for ${party} PO ${po.poNo ?? '(no number)'} (on hold)`
 }
 
 export function shortHoldDescription(po: CustomerPo, check: InventoryCheck, party: string): string {
@@ -88,8 +87,7 @@ export function shortHoldDescription(po: CustomerPo, check: InventoryCheck, part
 }
 
 export function customerFollowupTitle(po: CustomerPo, check: InventoryCheck, ownerLabel: string): string {
-  const items = customerShortLines(check).map((line) => `${line.itemCode} ${qty(line.shortNow)}${unit(line)}`)
-  return `Ask ${ownerLabel} for ${items.join(', ')} (customer-supplied) — PO ${po.poNo ?? '(no number)'}`
+  return `Ask ${ownerLabel} to send ${materials(customerShortLines(check).length)} for PO ${po.poNo ?? '(no number)'}`
 }
 
 export function customerFollowupDescription(po: CustomerPo, check: InventoryCheck, ownerLabel: string): string {
