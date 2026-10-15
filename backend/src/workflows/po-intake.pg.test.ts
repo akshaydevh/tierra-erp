@@ -317,8 +317,8 @@ describe.skipIf(!pg)('PO intake on the synthetic SAP fixture', () => {
     expect((await conn.store.listTasks()).filter((task) => task.subjectId === po!.id && task.kind === 'procurement')).toEqual([])
     const toAlex = sent.filter((row) => row.number === ALEX_PHONE).at(-1)!.text
     expect(toAlex).toContain('From: unknown number +919811100000\n⚠ Not a Tierra account: nothing is raised for this PO until the office confirms it.')
-    // the sender hears only the neutral line
-    expect(sent.find((row) => row.number === '919811100000')?.text).toBe("> 🧞‍♂️ Tierra Bot:\n\nReceived PO 4400055555. We'll confirm shortly.")
+    // the sender hears nothing
+    expect(sent.filter((row) => row.number === '919811100000')).toEqual([])
 
     // nothing goes on until every line is confirmed
     await expect(confirmPoReview(deps, po!.id)).rejects.toThrow('Confirm the item of line 1 first.')

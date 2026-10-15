@@ -136,6 +136,7 @@ describe('job worker', () => {
 
   it('handles a wa.incoming job as a WhatsApp turn', async () => {
     const { deps, sent, modelCalls } = setup()
+    await (deps.store as MemoryStore).saveRelation({ userId: 'usr_anju', phoneNumber: '919812345678' })
     const message = {
       id: 'in-1',
       remoteJid: '919812345678@s.whatsapp.net',
@@ -214,6 +215,7 @@ describe('job worker', () => {
 
   it('runs a WhatsApp turn at most once, even when its worker dies', async () => {
     const { deps, store } = setup()
+    await store.saveRelation({ userId: 'usr_anju', phoneNumber: '919812345678' })
     const queuedTurn = incomingJob(message('in-once', 'hi'), 'personal')
     expect(queuedTurn.maxAttempts).toBe(1)
     const job = (await store.enqueueJob({ ...queuedTurn, runAfter: now }))!

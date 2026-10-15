@@ -254,17 +254,14 @@ describe.skipIf(!pg)('Agent v2 on the synthetic SAP fixture', () => {
     })
   })
 
-  it('gives an unknown number no tools and no references', async () => {
-    llm.script(say('A Tierra person will get back to you.'))
+  it('never answers an unknown number in a direct chat', async () => {
     const event = parseWebhook({
       event: 'messages.upsert',
       instance: 'tierra',
       data: { key: { id: 'dm-unknown', remoteJid: '919811111111@s.whatsapp.net', fromMe: false }, message: { conversation: 'status of TF/25-26/1 and SO 1?' } },
     })
     if (event.type !== 'message') throw new Error('expected a message')
-    await handleIncoming(deps, event.message, 'personal')
-    expect(llm.requests[0]?.toolNames).toEqual([])
-    expect(String(llm.requests[0]?.messages.at(-1)?.content)).not.toContain('References found')
-    expect(llm.transcript()).not.toContain('Beta')
+    expect(await handleIncoming(deps, event.message, 'personal')).toBeNull()
+    expect(llm.requests).toEqual([])
   })
 })

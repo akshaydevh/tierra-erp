@@ -448,7 +448,7 @@ describe('whatsapp purchase orders', () => {
     expect(ctx.evolution.sent.at(-1)?.text).toBe('> 🧞‍♂️ Tierra Bot:\n\nTierra Bot here.')
   })
 
-  it('replies to a personal text and ignores a group PDF', async () => {
+  it('stays silent to a direct message from an unknown number and ignores a group PDF', async () => {
     const text = await post({
       event: 'messages.upsert',
       instance: 'tierra',
@@ -458,11 +458,11 @@ describe('whatsapp purchase orders', () => {
       },
     })
     expect(text.status).toBe(200)
-    expect(ctx.evolution.reactions.map((row) => row.emoji)).toEqual(['👀'])
-    expect(ctx.evolution.sent).toHaveLength(1)
-    expect(ctx.evolution.sent[0]?.text).toBe('> 🧞‍♂️ Tierra Bot:\n\nTierra Bot here.')
-    expect(ctx.llm.last()?.toolNames).toEqual([])
-    expect(ctx.store.messages.some((row) => row.evolutionMessageId === 'm-text')).toBe(true)
+    expect(await text.json()).toEqual({ ignored: true })
+    expect(ctx.evolution.reactions).toHaveLength(0)
+    expect(ctx.evolution.sent).toHaveLength(0)
+    expect(ctx.llm.calls).toBe(0)
+    expect(ctx.store.messages.some((row) => row.evolutionMessageId === 'm-text')).toBe(false)
 
     const group = await post(pdfBody('m-group', '120363000@g.us'))
     expect(group.status).toBe(200)
@@ -512,6 +512,7 @@ describe('whatsapp purchase orders', () => {
         return true
       },
     })
+    await ctx.store.saveRelation({ userId: 'usr_anju', phoneNumber: '919812345678' })
     const body = pdfBody('m-bytes')
     Object.assign(body.data, { base64: 'JVBERi0xLjQ=' })
     Object.assign(body.data.message.documentMessage, { jpegThumbnail: '/9j/4AAQ', mediaKey: 'key==' })
@@ -525,6 +526,7 @@ describe('whatsapp purchase orders', () => {
 
   it('treats a queued message as a duplicate even when its registry row was lost', async () => {
     ctx = await setup({ enqueue: async (job) => Boolean(await ctx.store.enqueueJob(job)) })
+    await ctx.store.saveRelation({ userId: 'usr_anju', phoneNumber: '919812345678' })
     expect(await (await post(textMessage('m-lost', '919812345678@s.whatsapp.net', 'hello'))).json()).toEqual({ ok: true })
     await ctx.store.releaseMessage('m-lost')
     expect(await (await post(textMessage('m-lost', '919812345678@s.whatsapp.net', 'hello'))).json()).toEqual({
@@ -636,12 +638,12 @@ describe('tierra bot', () => {
     expect(ctx.evolution.sent[0]?.text).toContain('Tierra Bot here.')
   })
 
-  it('never gives an unknown number a data tool', async () => {
-    await post(textMessage('cust-2', '919800000000@s.whatsapp.net', 'what is your stock'))
-    expect(ctx.llm.calls).toBe(1)
-    expect(ctx.llm.last()?.toolNames).toEqual([])
-    expect(ctx.llm.system()).toContain('not a Tierra account')
-    expect(ctx.llm.user()).toContain('an unknown WhatsApp number')
+  it('never answers a direct message from an unknown number', async () => {
+    const response = await post(textMessage('cust-2', '919800000000@s.whatsapp.net', 'what is your stock'))
+    expect(await response.json()).toEqual({ ignored: true })
+    expect(ctx.llm.calls).toBe(0)
+    expect(ctx.evolution.sent).toHaveLength(0)
+    expect(ctx.evolution.reactions).toHaveLength(0)
   })
 
   it('ignores the owner writing in someone else\'s chat', async () => {
@@ -736,12 +738,6 @@ describe('tierra bot', () => {
     expect(ctx.llm.user()).toContain("a member of Alpha Snacks's group (Anju)")
     expect(ctx.llm.system()).not.toContain('Tierra team member')
     expect(ctx.llm.last()?.toolNames).not.toContain('my_tasks')
-  })
-
-  it('treats an unlinked personal chat as an unknown sender', async () => {
-    await post(textMessage('who-unknown', '919800000000@s.whatsapp.net', 'hello'))
-    expect(ctx.llm.user()).toContain('Message from an unknown WhatsApp number')
-    expect(ctx.llm.last()?.toolNames).toEqual([])
   })
 
   it('answers a group @mention written in the text', async () => {
@@ -935,7 +931,8 @@ describe('tierra bot', () => {
     ).toBe('919900000000')
   })
 
-  it('replies to every received personal message', async () => {
+  it('replies to every received personal message from a linked account', async () => {
+    await ctx.store.saveRelation({ userId: 'usr_anju', phoneNumber: '919812345678' })
     await post(textMessage('in-hey', '919812345678@s.whatsapp.net', 'Hey'))
     expect(ctx.llm.calls).toBe(1)
     expect(ctx.evolution.sent).toHaveLength(1)
@@ -943,12 +940,14 @@ describe('tierra bot', () => {
   })
 
   it('replies to a received personal message on an older WhatsApp jid', async () => {
+    await ctx.store.saveRelation({ userId: 'usr_anju', phoneNumber: '919812345678' })
     await post(textMessage('in-cus', '919812345678@c.us', 'Hi'))
     expect(ctx.evolution.sent).toHaveLength(1)
     expect(ctx.llm.calls).toBe(1)
   })
 
   it('replies when a received personal message has no text', async () => {
+    await ctx.store.saveRelation({ userId: 'usr_anju', phoneNumber: '919812345678' })
     await post({
       event: 'messages.upsert',
       instance: 'tierra',
@@ -1651,12 +1650,10 @@ describe('whatsapp audience and leaks', () => {
     expect(ctx.store.tasks).toHaveLength(0)
   })
 
-  it('only acknowledges a PDF from an unknown number and leaves the review to the office', async () => {
+  it('records a PO from an unknown number for the office without a word to the sender', async () => {
     await post(pdfBody('dm-po', '919811111111@s.whatsapp.net'))
-    // An unknown number hears only the receipt; the admin gets the details.
-    expect(ctx.evolution.sent.find((row) => row.number === '919811111111')?.text).toBe(
-      "> 🧞‍♂️ Tierra Bot:\n\nReceived PO TPO-4401. We'll confirm shortly.",
-    )
+    expect(ctx.evolution.sent.filter((row) => row.number === '919811111111')).toHaveLength(0)
+    expect(ctx.evolution.reactions).toHaveLength(0)
     expect(ctx.evolution.sent.find((row) => row.number === ALEX_PHONE)?.text).toContain(NOT_IMPORTED_SUMMARY)
     expect(ctx.store.tasks).toEqual([
       expect.objectContaining({ title: 'Review PO TPO-4401', createdBy: 'usr_alex', assigneeId: 'usr_anju' }),
@@ -1664,10 +1661,18 @@ describe('whatsapp audience and leaks', () => {
     expect(ctx.store.tasks[0]?.description).toContain('Received from +919811111111.')
   })
 
+  it('keeps a non-PO PDF from an unknown number without replying', async () => {
+    ctx.setPoLike(false)
+    await post(pdfBody('dm-invoice', '919811111111@s.whatsapp.net'))
+    expect(ctx.store.documents).toHaveLength(1)
+    expect(ctx.evolution.sent).toHaveLength(0)
+  })
+
   it('keeps a PO on record for the office when reading it blows up', async () => {
     ctx.deps.readPurchaseOrder = async () => {
       throw new Error('reader crashed')
     }
+    await ctx.store.saveRelation({ userId: 'usr_anju', phoneNumber: ANJU_PHONE })
     await post(pdfBody('dm-crash', jid(ANJU_PHONE)))
     expect(ctx.store.documents).toHaveLength(1)
     expect(ctx.store.customerPos).toEqual([
@@ -1719,6 +1724,7 @@ describe('whatsapp audience and leaks', () => {
       },
     })
     await ctx.store.saveWhatsapp({ status: 'connected', phoneNumber: ALEX_PHONE, qrBase64: null })
+    await ctx.store.saveRelation({ userId: 'usr_anju', phoneNumber: ANJU_PHONE })
     const response = await post(textMessage('queued-1', jid(ANJU_PHONE), 'hello'))
     expect(response.status).toBe(200)
     expect(queued).toEqual([
@@ -1736,6 +1742,7 @@ describe('whatsapp audience and leaks', () => {
       },
     })
     await ctx.store.saveWhatsapp({ status: 'connected', phoneNumber: ALEX_PHONE, qrBase64: null })
+    await ctx.store.saveRelation({ userId: 'usr_anju', phoneNumber: ANJU_PHONE })
     const response = await post(textMessage('queued-2', jid(ANJU_PHONE), 'hello'))
     expect(response.status).toBe(500)
     expect(ctx.store.messages).toHaveLength(0)

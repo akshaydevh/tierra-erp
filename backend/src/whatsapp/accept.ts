@@ -5,6 +5,7 @@ import { incomingJob } from '../jobs/worker'
 import { requeueTaskNotices } from '../tasks/notify'
 import { isBotEcho } from './brand'
 import { enrichIdentity, learnIdentities, learnParticipants, unmappedMentions } from './identity'
+import { resolvePeople } from './people'
 import {
   audienceFor,
   isGroupJid,
@@ -64,6 +65,18 @@ async function calledByName(deps: AgentDeps, message: IncomingMessage): Promise<
     console.error('call_intent (TypeSafe) failed; treating the message as chatter', error)
     return false
   }
+}
+
+/**
+ * A direct chat from a number no Tierra account is linked to: dropped (no 👀, no reply, nothing stored), except a PDF,
+ * which intake records silently for the office. A DM that arrives as a bare LID with no phone learned yet lands here too.
+ */
+async function dropsUnknownDm(deps: AgentDeps, message: IncomingMessage, botPhone: string | null): Promise<boolean> {
+  const accounts = await deps.store.listAccountLinks()
+  if (resolvePeople(message, 'personal', accounts, botPhone).speaker || message.pdf) return false
+  const from = message.aliasJid ?? message.remoteJid
+  console.log(`Ignoring a WhatsApp DM from ${from}: not a linked Tierra account${from.endsWith('@lid') ? ' (LID with no phone known)' : ''}`)
+  return true
 }
 
 function senderJid(message: IncomingMessage): string | null {
@@ -143,6 +156,7 @@ export async function acceptWebhook(
   }
   if (audience === 'ignore' && (await isMappedGroupPdf(deps, message))) audience = 'group'
   if (audience === 'ignore' && (await calledByName(deps, message))) audience = 'group'
+  if (audience === 'personal' && (await dropsUnknownDm(deps, message, connection.phoneNumber))) audience = 'ignore'
   if (audience === 'ignore') return { status: 200, body: { ignored: true } }
   if (await deps.store.findMessage(message.id)) return { status: 200, body: { duplicate: true } }
   const queued = await deps.enqueue(incomingJob(withoutMedia(message), audience))

@@ -300,6 +300,11 @@ export async function routeMessage(
   const people = resolvePeople(message, chatKind, accounts, connection.phoneNumber)
   const speaker = desk?.speaker ?? people.speaker
 
+  // a direct chat from an unknown number never hears from the bot: a PDF is recorded silently, anything else dropped
+  if (chatKind === 'personal' && !speaker) {
+    return message.pdf ? intakePdf(deps, { message, chatKind, speaker, accounts }) : null
+  }
+
   if (message.reaction) {
     const approval = await handleApprovalReaction(deps, message, speaker)
     if (approval !== undefined) return approval

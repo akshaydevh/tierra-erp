@@ -20,9 +20,9 @@ import { ensureTierraPrefix, phoneJid, sendDm } from './send'
  * - a PO in a group from one of Tierra's own people: kept, silent (their PDFs there are Tierra's documents);
  * - unreadable: an office review task; the group hears nothing;
  * - a PO: the customer, lines, repeat and inventory check are worked out and recorded. The admin gets the details
- *   (a DM registered with subject ('customer_po', id)); a customer group or an unknown number only hears
- *   "Received PO <no>. We'll confirm shortly." An unmapped group also raises the office's "map group" task. A PO
- *   from an unknown number in a direct chat is recorded and checked but waits for the office (needs_review);
+ *   (a DM registered with subject ('customer_po', id)); a customer group only hears "Received PO <no>. We'll confirm
+ *   shortly." An unmapped group also raises the office's "map group" task. A PO from an unknown number in a direct
+ *   chat is recorded and checked but waits for the office (needs_review), and the sender hears nothing at all;
  * - anything that goes wrong on the way still leaves a PO on record for the office (never a stored PDF alone).
  */
 export type IntakeInput = {
@@ -148,6 +148,11 @@ export async function pinAdminToPo(deps: AgentDeps, accounts: AccountLink[], po:
   if (admin.phoneNumber) await deps.store.setChatContext(phoneJid(admin.phoneNumber), 'customer_po', po.id)
 }
 
+/** A direct chat from a number no Tierra account is linked to: the PO is kept for the office, the sender hears nothing. */
+function fromUnknownDm(input: IntakeInput): boolean {
+  return input.chatKind === 'personal' && !input.speaker && !isDeskThread(input.message.remoteJid)
+}
+
 async function reply(deps: AgentDeps, input: IntakeInput, outcome: Pick<IntakeOutcome, 'po' | 'summary'>): Promise<string | null> {
   const { message, chatKind, speaker, accounts } = input
   const subject = poSubject(outcome.po)
@@ -157,6 +162,7 @@ async function reply(deps: AgentDeps, input: IntakeInput, outcome: Pick<IntakeOu
     return sendBotText(deps, message, outcome.summary, [], subject)
   }
   await notifyAdmin(deps, accounts, outcome.summary, subject)
+  if (fromUnknownDm(input)) return null
   return sendBotText(deps, message, groupReceivedReply(outcome.po.poNo), [], subject)
 }
 
@@ -165,9 +171,10 @@ export async function intakePdf(deps: AgentDeps, input: IntakeInput): Promise<st
   const pdf = message.pdf
   if (!pdf) return null
   const inGroup = chatKind === 'group'
+  const silent = inGroup || fromUnknownDm(input)
   const stored = await storedPdf(deps, input)
   if (!stored) return null
-  if ('error' in stored) return inGroup ? null : sendBotText(deps, message, withSender(stored.error, speaker))
+  if ('error' in stored) return silent ? null : sendBotText(deps, message, withSender(stored.error, speaker))
 
   const sender = senderLabel(message, chatKind, speaker)
   let group: Awaited<ReturnType<typeof knownGroup>> | null = null
@@ -185,7 +192,7 @@ export async function intakePdf(deps: AgentDeps, input: IntakeInput): Promise<st
   let read: Awaited<ReturnType<AgentDeps['readPurchaseOrder']>>
   try {
     read = await deps.readPurchaseOrder(stored.content)
-    if (read.kind === 'not_po') return inGroup ? null : sendBotText(deps, message, receivedReply(pdf.fileName))
+    if (read.kind === 'not_po') return silent ? null : sendBotText(deps, message, receivedReply(pdf.fileName))
     group = inGroup ? await knownGroup(deps, message.remoteJid) : null
     if (group && !group.partyGroupId) {
       await raiseMapGroupTask(deps, message.remoteJid, speaker, accounts, `A purchase order (${pdf.fileName}) arrived in this group, which is not linked to a customer.`)
@@ -200,7 +207,7 @@ export async function intakePdf(deps: AgentDeps, input: IntakeInput): Promise<st
   if (read.kind === 'unreadable') {
     const po = await recordForReview(deps, { po: null, poNumber: read.poNumber, reader: read.reader, reason: read.reason }, source)
     await raiseReviewTask(deps, po, input, where)
-    if (inGroup) return null
+    if (silent) return null
     return sendBotText(
       deps,
       message,
