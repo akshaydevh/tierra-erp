@@ -677,6 +677,13 @@ td .sub { font-size: 12px; color: var(--inksoft); margin-top: 2px; }
   background: var(--paper);
   box-shadow: var(--sh-sm);
   cursor: grab;
+  user-select: none;
+}
+.taskcard-drag-preview {
+  position: fixed;
+  top: 0;
+  left: -10000px;
+  pointer-events: none;
 }
 .taskcard b { font-size: 14px; line-height: 1.35; }
 .taskdetail { font-size: 13px; line-height: 1.45; color: var(--inksoft); }

@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import {
   ROLES,
   TASK_CATEGORIES,
@@ -85,6 +85,37 @@ export function TaskBoard() {
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [over, setOver] = useState<TaskStatus | null>(null)
+  const dragPreview = useRef<HTMLElement | null>(null)
+
+  useEffect(() => () => dragPreview.current?.remove(), [])
+
+  function endDrag() {
+    dragPreview.current?.remove()
+    dragPreview.current = null
+    setOver(null)
+  }
+
+  function startDrag(task: Task, event: React.DragEvent<HTMLElement>) {
+    // Links and form controls keep their own interactions inside a draggable card.
+    if ((event.target as HTMLElement).closest('a, button, input, select, textarea')) {
+      event.preventDefault()
+      return
+    }
+    endDrag()
+    const card = event.currentTarget
+    const bounds = card.getBoundingClientRect()
+    // Isolate the preview so the browser cannot capture neighboring cards.
+    const preview = card.cloneNode(true) as HTMLElement
+    preview.classList.add('taskcard-drag-preview')
+    preview.style.width = `${bounds.width}px`
+    preview.setAttribute('aria-hidden', 'true')
+    preview.inert = true
+    document.body.appendChild(preview)
+    dragPreview.current = preview
+    event.dataTransfer.effectAllowed = 'move'
+    event.dataTransfer.setData('text/plain', task.id)
+    event.dataTransfer.setDragImage(preview, event.clientX - bounds.left, event.clientY - bounds.top)
+  }
 
   async function load() {
     const response = await fetch('/api/tasks')
@@ -162,7 +193,7 @@ export function TaskBoard() {
 
   function onDrop(status: TaskStatus, event: React.DragEvent) {
     event.preventDefault()
-    setOver(null)
+    endDrag()
     const id = event.dataTransfer.getData('text/plain')
     const task = board?.tasks.find((row) => row.id === id)
     if (!task || task.status === status) return
@@ -245,7 +276,8 @@ export function TaskBoard() {
                 className="taskcard"
                 draggable
                 aria-label={task.title}
-                onDragStart={(event) => event.dataTransfer.setData('text/plain', task.id)}
+                onDragStart={(event) => startDrag(task, event)}
+                onDragEnd={endDrag}
               >
                 <b>{task.title}</b>
                 {task.description ? <p className="taskdetail">{task.description}</p> : null}
