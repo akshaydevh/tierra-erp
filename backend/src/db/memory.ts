@@ -47,8 +47,11 @@ import type {
   NewInventoryCheck,
   PartyAlias,
   StockOverlay,
+  JobAccessRole,
   JobRecord,
+  JobRole,
   NewJob,
+  NewPerson,
   NewPartyGroup,
   NewTask,
   PartyGroup,
@@ -83,7 +86,8 @@ function newId(prefix: string): string {
 }
 
 export class MemoryStore implements Store {
-  users: User[]
+  users: Array<User & { jobRoleId?: string | null }>
+  jobRoles: JobRole[] = []
   sessions: SessionRow[] = []
   documents: DocumentRow[] = []
   messages: MessageRow[] = []
@@ -147,7 +151,13 @@ export class MemoryStore implements Store {
       email: user.email,
       role: user.role,
       phoneNumber: this.relations.find((row) => row.userId === user.id)?.phoneNumber ?? null,
+      jobRole: this.jobRoleRef(user.jobRoleId),
     }))
+  }
+
+  private jobRoleRef(id: string | null | undefined): { id: string; name: string } | null {
+    const role = id ? this.jobRoles.find((row) => row.id === id) : undefined
+    return role ? { id: role.id, name: role.name } : null
   }
 
   async saveRelation(input: { userId: string; phoneNumber: string }): Promise<void> {
@@ -174,6 +184,43 @@ export class MemoryStore implements Store {
       if (row.role === 'admin' && row.id !== userId) row.role = 'manager'
     }
     user.role = 'admin'
+    return 'ok'
+  }
+
+  async listJobRoles(): Promise<JobRole[]> {
+    return [...this.jobRoles].sort((a, b) => a.name.localeCompare(b.name))
+  }
+
+  async createJobRole(input: { name: string; accessRole: JobAccessRole }): Promise<JobRole | 'name_taken'> {
+    const name = input.name.trim()
+    if (this.jobRoles.some((row) => row.name.toLowerCase() === name.toLowerCase())) return 'name_taken'
+    const role: JobRole = { id: newId('jrl'), name, accessRole: input.accessRole }
+    this.jobRoles.push(role)
+    return role
+  }
+
+  async createUser(input: NewPerson): Promise<PublicUser | 'email_taken'> {
+    const email = input.email.trim().toLowerCase()
+    if (this.users.some((row) => row.email.toLowerCase() === email)) return 'email_taken'
+    const user = {
+      id: newId('usr'),
+      email,
+      name: input.name.trim(),
+      role: input.role,
+      passwordHash: input.passwordHash,
+      jobRoleId: input.jobRoleId,
+    }
+    this.users.push(user)
+    return toPublicUser(user)
+  }
+
+  async setUserJobRole(userId: string, jobRoleId: string | null): Promise<'ok' | 'not_found' | 'role_not_found'> {
+    const user = this.users.find((row) => row.id === userId)
+    if (!user) return 'not_found'
+    const role = jobRoleId ? this.jobRoles.find((row) => row.id === jobRoleId) : null
+    if (jobRoleId && !role) return 'role_not_found'
+    user.jobRoleId = jobRoleId
+    if (role && user.role !== 'admin') user.role = role.accessRole
     return 'ok'
   }
 

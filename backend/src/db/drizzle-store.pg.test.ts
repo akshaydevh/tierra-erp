@@ -80,6 +80,38 @@ describe.skipIf(!pg)('DrizzleStore on Postgres 18', () => {
     )
   })
 
+  it('adds job roles and people, and a job role sets access for all but the admin', async () => {
+    const head = await conn.store.createJobRole({ name: 'Production head', accessRole: 'manager' })
+    expect(head).toMatchObject({ name: 'Production head', accessRole: 'manager' })
+    expect(await conn.store.createJobRole({ name: 'production head', accessRole: 'office' })).toBe('name_taken')
+    if (head === 'name_taken') throw new Error('unreachable')
+
+    const anish = await conn.store.createUser({
+      name: 'Anish',
+      email: 'Anish@Tierra.test',
+      role: 'manager',
+      passwordHash: 'x',
+      jobRoleId: head.id,
+    })
+    expect(anish).toMatchObject({ email: 'anish@tierra.test', role: 'manager' })
+    expect(
+      await conn.store.createUser({ name: 'Again', email: 'anish@tierra.test', role: 'office', passwordHash: 'x', jobRoleId: null }),
+    ).toBe('email_taken')
+
+    const qc = await conn.store.createJobRole({ name: 'QC and stores', accessRole: 'office' })
+    if (qc === 'name_taken') throw new Error('unreachable')
+    expect(await conn.store.setUserJobRole('usr_joshy', qc.id)).toBe('ok')
+    expect(await conn.store.setUserJobRole('usr_alex', qc.id)).toBe('ok')
+    expect(await conn.store.setUserJobRole('usr_joshy', 'jrl_missing')).toBe('role_not_found')
+    expect(await conn.store.setUserJobRole('usr_nobody', null)).toBe('not_found')
+    const accounts = await conn.store.listAccountLinks()
+    const byId = (id: string) => accounts.find((account) => account.id === id)
+    expect(byId('usr_joshy')).toMatchObject({ role: 'office', jobRole: { id: qc.id, name: 'QC and stores' } })
+    expect(byId('usr_alex')).toMatchObject({ role: 'admin', jobRole: { name: 'QC and stores' } })
+    expect(byId('usr_anju')?.jobRole).toBeNull()
+    expect((await conn.store.listJobRoles()).map((role) => role.name)).toEqual(['Production head', 'QC and stores'])
+  })
+
   it('creates one live task per subject and kind', async () => {
     const input = {
       title: ' Buy raw banana ',

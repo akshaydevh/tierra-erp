@@ -24,6 +24,18 @@ export type AccountLink = {
   email: string
   role: Role
   phoneNumber: string | null
+  jobRole?: { id: string; name: string } | null
+}
+
+/** The access levels a job role can grant; there is one admin, set from Settings. */
+export const JOB_ACCESS_ROLES = ['manager', 'office'] as const
+export type JobAccessRole = (typeof JOB_ACCESS_ROLES)[number]
+
+/** A job role from Masters (`GET /api/job-roles`), e.g. Production head with manager access. */
+export type JobRole = {
+  id: string
+  name: string
+  accessRole: JobAccessRole
 }
 
 export type RoleHolder = { id: string; name: string }

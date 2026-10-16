@@ -34,9 +34,7 @@ export function canOpen(role: Role, href: string): boolean {
   return !item?.roles || item.roles.includes(role)
 }
 
-const placeholders: Record<string, string> = {
-  masters: 'Masters',
-}
+const placeholders: Record<string, string> = {}
 
 export function placeholderTitle(module: string): string | null {
   return placeholders[module] ?? null

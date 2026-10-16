@@ -36,8 +36,11 @@ import type {
   NewInventoryCheck,
   PartyAlias,
   StockOverlay,
+  JobAccessRole,
   JobRecord,
+  JobRole,
   NewJob,
+  NewPerson,
   NewPartyGroup,
   NewTask,
   PartyGroup,
@@ -120,6 +123,16 @@ export interface Store {
   updateUserRole(userId: string, role: Role): Promise<'ok' | 'not_found' | 'admin_taken'>
   /** Makes this user the admin and the current admin a manager, in one transaction. */
   transferAdmin(userId: string): Promise<'ok' | 'not_found'>
+  /** Job roles from Masters, by name. */
+  listJobRoles(): Promise<JobRole[]>
+  /** Adds a job role. Names are unique ignoring case. */
+  createJobRole(input: { name: string; accessRole: JobAccessRole }): Promise<JobRole | 'name_taken'>
+  /** Adds a person who can sign in. The email is stored lower-cased and must be new. */
+  createUser(input: NewPerson): Promise<PublicUser | 'email_taken'>
+  /**
+   * Gives a person a job role (or none). A non-admin also gets the role's access level; the admin stays admin.
+   */
+  setUserJobRole(userId: string, jobRoleId: string | null): Promise<'ok' | 'not_found' | 'role_not_found'>
 
   getWhatsapp(): Promise<WhatsappConnection>
   saveWhatsapp(

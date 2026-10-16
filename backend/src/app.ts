@@ -2,7 +2,7 @@ import { Hono, type Context } from 'hono'
 import { bodyLimit } from 'hono/body-limit'
 import { HTTPException } from 'hono/http-exception'
 import { z } from 'zod'
-import { verifyPassword } from './auth/password'
+import { MIN_PASSWORD_LENGTH, hashPassword, verifyPassword } from './auth/password'
 import {
   SESSION_COOKIE,
   clearSessionCookie,
@@ -18,6 +18,7 @@ import { holderForRole } from './domain/routing'
 import { PartyGroupConflictError } from './db/store'
 import {
   CUSTOMER_PO_STATUSES,
+  JOB_ACCESS_ROLES,
   ROLES,
   SALES_ORDER_STATUSES,
   TASK_CATEGORIES,
@@ -228,6 +229,27 @@ const partyGroupSchema = z.object({
 const userRoleSchema = z.object({
   role: roleSchema,
   transfer: z.boolean().optional(),
+})
+
+const jobAccessRoleSchema = z.enum(JOB_ACCESS_ROLES)
+
+const jobRoleSchema = z.object({
+  name: z.string().trim().min(1).max(60),
+  accessRole: jobAccessRoleSchema,
+})
+
+const newPersonSchema = z.object({
+  name: z.string().trim().min(1).max(80),
+  email: z.string().trim().email(),
+  password: z.string(),
+  /** A job role sets the access level; without one, accessRole does (office when left out). */
+  jobRoleId: z.string().min(1).nullish(),
+  accessRole: jobAccessRoleSchema.optional(),
+  phoneNumber: z.string().optional(),
+})
+
+const userJobRoleSchema = z.object({
+  jobRoleId: z.string().min(1).nullable(),
 })
 
 /**
@@ -1130,6 +1152,65 @@ export function createApp(deps: AppDeps) {
     const result = await deps.store.updateUserRole(target.id, role)
     if (result === 'not_found') return c.json({ error: 'That account does not exist' }, 404)
     if (result === 'admin_taken') return c.json({ error: 'There can only be one admin' }, 409)
+    return c.json({ accounts: await deps.store.listAccountLinks() })
+  })
+
+  app.get('/api/job-roles', async (c) => c.json({ roles: await deps.store.listJobRoles() }))
+
+  app.post('/api/job-roles', async (c) => {
+    const user = await userFrom(c.req.header('cookie'))
+    if (!user) return c.json({ error: 'Unauthorized' }, 401)
+    if (user.role !== 'admin') return c.json({ error: 'Only an admin can add roles' }, 403)
+    const parsed = jobRoleSchema.safeParse(await c.req.json().catch(() => null))
+    if (!parsed.success) return c.json({ error: 'Name the role and choose manager or office access' }, 400)
+    const role = await deps.store.createJobRole(parsed.data)
+    if (role === 'name_taken') return c.json({ error: `There is already a role called ${parsed.data.name}` }, 409)
+    return c.json({ role, roles: await deps.store.listJobRoles() }, 201)
+  })
+
+  /** Adds a person who signs in with the password the admin sets here, optionally with a job role and phone. */
+  app.post('/api/users', async (c) => {
+    const user = await userFrom(c.req.header('cookie'))
+    if (!user) return c.json({ error: 'Unauthorized' }, 401)
+    if (user.role !== 'admin') return c.json({ error: 'Only an admin can add people' }, 403)
+    const parsed = newPersonSchema.safeParse(await c.req.json().catch(() => null))
+    if (!parsed.success) return c.json({ error: 'Enter a name and a valid email' }, 400)
+    const input = parsed.data
+    if (input.password.length < MIN_PASSWORD_LENGTH) {
+      return c.json({ error: `Use a password of at least ${MIN_PASSWORD_LENGTH} characters` }, 400)
+    }
+    const jobRole = input.jobRoleId
+      ? (await deps.store.listJobRoles()).find((role) => role.id === input.jobRoleId)
+      : null
+    if (input.jobRoleId && !jobRole) return c.json({ error: 'That role does not exist' }, 404)
+    let phone: string | null = null
+    if (input.phoneNumber && /\d/.test(input.phoneNumber)) {
+      phone = normalizePhone(input.phoneNumber, deps.defaultCountryCode)
+      if (!phone) return c.json({ error: PHONE_FORMAT }, 400)
+      const taken = (await deps.store.listAccountLinks()).find((account) => account.phoneNumber === phone)
+      if (taken) return c.json({ error: `${taken.name} already uses that number` }, 409)
+    }
+    const created = await deps.store.createUser({
+      name: input.name,
+      email: input.email,
+      role: jobRole?.accessRole ?? input.accessRole ?? 'office',
+      passwordHash: await hashPassword(input.password),
+      jobRoleId: jobRole?.id ?? null,
+    })
+    if (created === 'email_taken') return c.json({ error: `${input.email} already has an account` }, 409)
+    if (phone) await deps.store.saveRelation({ userId: created.id, phoneNumber: phone })
+    return c.json({ user: created, accounts: await deps.store.listAccountLinks() }, 201)
+  })
+
+  app.put('/api/users/:id/job-role', async (c) => {
+    const user = await userFrom(c.req.header('cookie'))
+    if (!user) return c.json({ error: 'Unauthorized' }, 401)
+    if (user.role !== 'admin') return c.json({ error: 'Only an admin can change roles' }, 403)
+    const parsed = userJobRoleSchema.safeParse(await c.req.json().catch(() => null))
+    if (!parsed.success) return c.json({ error: 'Choose a role' }, 400)
+    const result = await deps.store.setUserJobRole(c.req.param('id'), parsed.data.jobRoleId)
+    if (result === 'not_found') return c.json({ error: 'That account does not exist' }, 404)
+    if (result === 'role_not_found') return c.json({ error: 'That role does not exist' }, 404)
     return c.json({ accounts: await deps.store.listAccountLinks() })
   })
 

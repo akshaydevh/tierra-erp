@@ -3,12 +3,12 @@ import { createInterface } from 'node:readline'
 import type { Readable } from 'node:stream'
 import { eq } from 'drizzle-orm'
 import type { PostgresJsDatabase } from 'drizzle-orm/postgres-js'
-import { hashPassword } from '../auth/password'
+import { MIN_PASSWORD_LENGTH, hashPassword } from '../auth/password'
 import * as schema from '../db/schema'
 
 type Database = PostgresJsDatabase<typeof schema>
 
-export const MIN_PASSWORD_LENGTH = 8
+export { MIN_PASSWORD_LENGTH }
 
 export class PasswordInputError extends Error {}
 

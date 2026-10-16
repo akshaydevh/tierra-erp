@@ -110,12 +110,37 @@ export type PublicUser = {
   role: Role
 }
 
+/** The access levels a job role can grant. Admin is not one: there is a single admin, set from Settings. */
+export const JOB_ACCESS_ROLES = ['manager', 'office'] as const
+export type JobAccessRole = (typeof JOB_ACCESS_ROLES)[number]
+
+export function asJobAccessRole(value: string): JobAccessRole {
+  if ((JOB_ACCESS_ROLES as readonly string[]).includes(value)) return value as JobAccessRole
+  throw new Error(`Unknown job access role ${value}`)
+}
+
+/** A job role from Masters, e.g. Production head with manager access. */
+export type JobRole = {
+  id: string
+  name: string
+  accessRole: JobAccessRole
+}
+
 export type AccountLink = {
   id: string
   name: string
   email: string
   role: Role
   phoneNumber: string | null
+  jobRole?: { id: string; name: string } | null
+}
+
+export type NewPerson = {
+  email: string
+  name: string
+  role: Exclude<Role, 'admin'>
+  passwordHash: string
+  jobRoleId: string | null
 }
 
 export type WhatsappConnection = {

@@ -30,6 +30,21 @@ export const bytea = customType<{ data: Buffer; driverData: Buffer }>({
   },
 })
 
+/** A job role added from Masters (Production head, Accountant). Its holders get access_role's rights. */
+export const jobRoles = pgTable(
+  'job_roles',
+  {
+    id: text('id').primaryKey(),
+    name: text('name').notNull(),
+    accessRole: text('access_role').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    check('job_roles_access_role_check', sql`${table.accessRole} in ('manager', 'office')`),
+    uniqueIndex('job_roles_name_unique').on(sql`lower(${table.name})`),
+  ],
+)
+
 export const users = pgTable(
   'users',
   {
@@ -38,6 +53,7 @@ export const users = pgTable(
     name: text('name').notNull(),
     role: text('role').notNull(),
     passwordHash: text('password_hash').notNull(),
+    jobRoleId: text('job_role_id').references(() => jobRoles.id, { onDelete: 'set null' }),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [

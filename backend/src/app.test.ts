@@ -1767,6 +1767,87 @@ describe('whatsapp audience and leaks', () => {
   })
 })
 
+describe('masters: people and job roles', () => {
+  let ctx: Awaited<ReturnType<typeof setup>>
+
+  beforeEach(async () => {
+    ctx = await setup()
+  })
+
+  async function send(cookie: string, method: string, path: string, body: unknown) {
+    return ctx.app.request(path, {
+      method,
+      headers: { cookie, 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+    })
+  }
+
+  type Account = { id: string; name: string; email: string; role: string; phoneNumber: string | null; jobRole: { id: string; name: string } | null }
+
+  it('lets the admin add a role and a person who can then sign in with its access', async () => {
+    const manager = await login(ctx.app, 'joshy@tierra.test')
+    expect((await send(manager, 'POST', '/api/job-roles', { name: 'Accountant', accessRole: 'office' })).status).toBe(403)
+    expect((await send(manager, 'POST', '/api/users', { name: 'X', email: 'x@tierra.test', password: 'longenough' })).status).toBe(403)
+
+    const admin = await login(ctx.app, 'alex.thomas@tierra.test')
+    const added = await send(admin, 'POST', '/api/job-roles', { name: 'Production head', accessRole: 'manager' })
+    expect(added.status).toBe(201)
+    const { role } = (await added.json()) as { role: { id: string; name: string; accessRole: string } }
+    expect(role).toMatchObject({ name: 'Production head', accessRole: 'manager' })
+    expect((await send(admin, 'POST', '/api/job-roles', { name: 'production HEAD', accessRole: 'office' })).status).toBe(409)
+    expect((await send(admin, 'POST', '/api/job-roles', { name: 'Owner', accessRole: 'admin' })).status).toBe(400)
+
+    const short = await send(admin, 'POST', '/api/users', { name: 'Anish', email: 'anish@tierra.test', password: 'short' })
+    expect(short.status).toBe(400)
+
+    const person = await send(admin, 'POST', '/api/users', {
+      name: 'Anish',
+      email: 'Anish@Tierra.test',
+      password: 'production1',
+      jobRoleId: role.id,
+      phoneNumber: '91 98470 55555',
+    })
+    expect(person.status).toBe(201)
+    const body = (await person.json()) as { user: { id: string }; accounts: Account[] }
+    expect(body.accounts.find((account) => account.id === body.user.id)).toMatchObject({
+      email: 'anish@tierra.test',
+      role: 'manager',
+      phoneNumber: '919847055555',
+      jobRole: { id: role.id, name: 'Production head' },
+    })
+
+    const again = await send(admin, 'POST', '/api/users', { name: 'Anish 2', email: 'anish@tierra.test', password: 'production1' })
+    expect(again.status).toBe(409)
+
+    const signIn = await ctx.app.request('/api/auth/login', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ email: 'anish@tierra.test', password: 'production1' }),
+    })
+    expect(signIn.status).toBe(200)
+    expect(((await signIn.json()) as { user: { role: string } }).user.role).toBe('manager')
+  })
+
+  it('assigns a job role, giving its access to everyone but the admin', async () => {
+    const admin = await login(ctx.app, 'alex.thomas@tierra.test')
+    const added = await send(admin, 'POST', '/api/job-roles', { name: 'QC and stores', accessRole: 'office' })
+    const { role } = (await added.json()) as { role: { id: string } }
+
+    const joshy = await send(admin, 'PUT', '/api/users/usr_joshy/job-role', { jobRoleId: role.id })
+    expect(joshy.status).toBe(200)
+    const accounts = ((await joshy.json()) as { accounts: Account[] }).accounts
+    expect(accounts.find((account) => account.id === 'usr_joshy')).toMatchObject({ role: 'office', jobRole: { name: 'QC and stores' } })
+
+    const alex = await send(admin, 'PUT', '/api/users/usr_alex/job-role', { jobRoleId: role.id })
+    expect(((await alex.json()) as { accounts: Account[] }).accounts.find((account) => account.id === 'usr_alex')?.role).toBe('admin')
+
+    const cleared = await send(admin, 'PUT', '/api/users/usr_joshy/job-role', { jobRoleId: null })
+    expect(((await cleared.json()) as { accounts: Account[] }).accounts.find((account) => account.id === 'usr_joshy')?.jobRole).toBeNull()
+    expect((await send(admin, 'PUT', '/api/users/usr_joshy/job-role', { jobRoleId: 'jrl_missing' })).status).toBe(404)
+    expect((await send(admin, 'PUT', '/api/users/usr_nobody/job-role', { jobRoleId: null })).status).toBe(404)
+  })
+})
+
 describe('roles and sign-in', () => {
   let ctx: Awaited<ReturnType<typeof setup>>
 

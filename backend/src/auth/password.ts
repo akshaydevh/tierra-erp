@@ -3,6 +3,8 @@ import { promisify } from 'node:util'
 
 const scryptAsync = promisify(scrypt)
 
+export const MIN_PASSWORD_LENGTH = 8
+
 export async function hashPassword(password: string): Promise<string> {
   const salt = randomBytes(16).toString('hex')
   const derived = (await scryptAsync(password, salt, 32)) as Buffer

@@ -64,6 +64,9 @@ import type {
   NewTask,
   PartyGroup,
   PartyMember,
+  JobAccessRole,
+  JobRole,
+  NewPerson,
   PublicUser,
   Role,
   StoredDocument,
@@ -81,6 +84,7 @@ import {
   JOB_STATUSES,
   MESSAGE_KINDS,
   RESERVING_SO_STATUSES,
+  asJobAccessRole,
   asRole,
   asTaskCategory,
   asTaskKind,
@@ -224,8 +228,11 @@ export class DrizzleStore implements Store {
           name: schema.users.name,
           email: schema.users.email,
           role: schema.users.role,
+          jobRoleId: schema.jobRoles.id,
+          jobRoleName: schema.jobRoles.name,
         })
         .from(schema.users)
+        .leftJoin(schema.jobRoles, eq(schema.jobRoles.id, schema.users.jobRoleId))
         .orderBy(schema.users.name),
       this.db
         .select({
@@ -240,6 +247,7 @@ export class DrizzleStore implements Store {
       email: user.email,
       role: asRole(user.role),
       phoneNumber: relations.find((row) => row.userId === user.id)?.phoneNumber ?? null,
+      jobRole: user.jobRoleId && user.jobRoleName ? { id: user.jobRoleId, name: user.jobRoleName } : null,
     }))
   }
 
@@ -284,6 +292,59 @@ export class DrizzleStore implements Store {
         .set({ role: 'manager' })
         .where(and(eq(schema.users.role, 'admin'), ne(schema.users.id, userId)))
       await tx.update(schema.users).set({ role: 'admin' }).where(eq(schema.users.id, userId))
+      return 'ok'
+    })
+  }
+
+  async listJobRoles(): Promise<JobRole[]> {
+    const rows = await this.db.select().from(schema.jobRoles).orderBy(schema.jobRoles.name)
+    return rows.map((row) => ({ id: row.id, name: row.name, accessRole: asJobAccessRole(row.accessRole) }))
+  }
+
+  async createJobRole(input: { name: string; accessRole: JobAccessRole }): Promise<JobRole | 'name_taken'> {
+    const role: JobRole = { id: newId('jrl'), name: input.name.trim(), accessRole: input.accessRole }
+    try {
+      await this.db.insert(schema.jobRoles).values(role)
+      return role
+    } catch (error) {
+      if (isUniqueViolation(error, 'job_roles_name_unique')) return 'name_taken'
+      throw error
+    }
+  }
+
+  async createUser(input: NewPerson): Promise<PublicUser | 'email_taken'> {
+    const user = {
+      id: newId('usr'),
+      email: input.email.trim().toLowerCase(),
+      name: input.name.trim(),
+      role: input.role,
+      passwordHash: input.passwordHash,
+      jobRoleId: input.jobRoleId,
+    }
+    try {
+      await this.db.insert(schema.users).values(user)
+      return toPublicUser(user)
+    } catch (error) {
+      if (isUniqueViolation(error, 'users_email_unique')) return 'email_taken'
+      throw error
+    }
+  }
+
+  async setUserJobRole(userId: string, jobRoleId: string | null): Promise<'ok' | 'not_found' | 'role_not_found'> {
+    return this.db.transaction(async (tx) => {
+      const [user] = await tx
+        .select({ role: schema.users.role })
+        .from(schema.users)
+        .where(eq(schema.users.id, userId))
+        .for('update')
+      if (!user) return 'not_found'
+      const [role] = jobRoleId ? await tx.select().from(schema.jobRoles).where(eq(schema.jobRoles.id, jobRoleId)) : [null]
+      if (jobRoleId && !role) return 'role_not_found'
+      const access = role && user.role !== 'admin' ? { role: role.accessRole } : {}
+      await tx
+        .update(schema.users)
+        .set({ jobRoleId, ...access })
+        .where(eq(schema.users.id, userId))
       return 'ok'
     })
   }
