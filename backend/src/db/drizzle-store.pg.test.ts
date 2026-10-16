@@ -80,7 +80,7 @@ describe.skipIf(!pg)('DrizzleStore on Postgres 18', () => {
     )
   })
 
-  it('adds job roles and people, and a job role sets access for all but the admin', async () => {
+  it('adds job roles and people; a person holds a built-in role or a job role, never both', async () => {
     const head = await conn.store.createJobRole({ name: 'Production head', accessRole: 'manager' })
     expect(head).toMatchObject({ name: 'Production head', accessRole: 'manager' })
     expect(await conn.store.createJobRole({ name: 'production head', accessRole: 'office' })).toBe('name_taken')
@@ -101,14 +101,16 @@ describe.skipIf(!pg)('DrizzleStore on Postgres 18', () => {
     const qc = await conn.store.createJobRole({ name: 'QC and stores', accessRole: 'office' })
     if (qc === 'name_taken') throw new Error('unreachable')
     expect(await conn.store.setUserJobRole('usr_joshy', qc.id)).toBe('ok')
-    expect(await conn.store.setUserJobRole('usr_alex', qc.id)).toBe('ok')
+    expect(await conn.store.setUserJobRole('usr_anju', qc.id)).toBe('ok')
+    expect(await conn.store.setUserJobRole('usr_alex', qc.id)).toBe('is_admin')
     expect(await conn.store.setUserJobRole('usr_joshy', 'jrl_missing')).toBe('role_not_found')
-    expect(await conn.store.setUserJobRole('usr_nobody', null)).toBe('not_found')
+    expect(await conn.store.setUserJobRole('usr_nobody', qc.id)).toBe('not_found')
+    expect(await conn.store.updateUserRole('usr_anju', 'office')).toBe('ok')
     const accounts = await conn.store.listAccountLinks()
     const byId = (id: string) => accounts.find((account) => account.id === id)
     expect(byId('usr_joshy')).toMatchObject({ role: 'office', jobRole: { id: qc.id, name: 'QC and stores' } })
-    expect(byId('usr_alex')).toMatchObject({ role: 'admin', jobRole: { name: 'QC and stores' } })
-    expect(byId('usr_anju')?.jobRole).toBeNull()
+    expect(byId('usr_alex')).toMatchObject({ role: 'admin', jobRole: null })
+    expect(byId('usr_anju')).toMatchObject({ role: 'office', jobRole: null })
     expect((await conn.store.listJobRoles()).map((role) => role.name)).toEqual(['Production head', 'QC and stores'])
   })
 

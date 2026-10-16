@@ -119,7 +119,10 @@ export interface Store {
   listAccountLinks(): Promise<AccountLink[]>
   saveRelation(input: { userId: string; phoneNumber: string }): Promise<void>
   deleteRelation(userId: string): Promise<void>
-  /** Changes a user's role. There is only ever one admin: giving admin to a second user returns 'admin_taken'. */
+  /**
+   * Gives a user one of the built-in roles, dropping any job role. There is only ever one admin: giving admin to a
+   * second user returns 'admin_taken'.
+   */
   updateUserRole(userId: string, role: Role): Promise<'ok' | 'not_found' | 'admin_taken'>
   /** Makes this user the admin and the current admin a manager, in one transaction. */
   transferAdmin(userId: string): Promise<'ok' | 'not_found'>
@@ -130,9 +133,10 @@ export interface Store {
   /** Adds a person who can sign in. The email is stored lower-cased and must be new. */
   createUser(input: NewPerson): Promise<PublicUser | 'email_taken'>
   /**
-   * Gives a person a job role (or none). A non-admin also gets the role's access level; the admin stays admin.
+   * Gives a person a job role in place of a built-in one; they get the role's access level. The admin cannot take
+   * one ('is_admin'): there must always be an admin, so another person is made admin first.
    */
-  setUserJobRole(userId: string, jobRoleId: string | null): Promise<'ok' | 'not_found' | 'role_not_found'>
+  setUserJobRole(userId: string, jobRoleId: string): Promise<'ok' | 'not_found' | 'role_not_found' | 'is_admin'>
 
   getWhatsapp(): Promise<WhatsappConnection>
   saveWhatsapp(

@@ -2,20 +2,56 @@
 
 import { useRouter } from 'next/navigation'
 import { useCallback, useEffect, useState } from 'react'
-import { JOB_ACCESS_ROLES, roleLabel, type AccountLink, type JobAccessRole, type JobRole, type Me, type Role } from '@/lib/types'
+import { JOB_ACCESS_ROLES, ROLES, roleLabel, type AccountLink, type JobAccessRole, type JobRole, type Me, type Role } from '@/lib/types'
 
 const MIN_PASSWORD_LENGTH = 8
+
+/** A role picker value: a built-in role ('admin', 'manager', 'office') or `job:<id>` for an added one. */
+type RoleChoice = Role | `job:${string}`
 
 type PersonDraft = {
   name: string
   email: string
   password: string
-  jobRoleId: string
-  accessRole: JobAccessRole
+  role: RoleChoice
   phoneNumber: string
 }
 
-const EMPTY_PERSON: PersonDraft = { name: '', email: '', password: '', jobRoleId: '', accessRole: 'office', phoneNumber: '' }
+const EMPTY_PERSON: PersonDraft = { name: '', email: '', password: '', role: 'office', phoneNumber: '' }
+
+function choiceOf(account: AccountLink): RoleChoice {
+  return account.jobRole ? `job:${account.jobRole.id}` : account.role
+}
+
+function jobIdOf(choice: RoleChoice): string | null {
+  return choice.startsWith('job:') ? choice.slice(4) : null
+}
+
+/** Asks before a new admin takes over; the current admin becomes a manager. False when the admin declines. */
+function confirmTransfer(name: string, admin: AccountLink | undefined): boolean {
+  return !admin || window.confirm(`Make ${name} the admin? ${admin.name} becomes Manager.`)
+}
+
+function RoleOptions({ roles }: { roles: JobRole[] }) {
+  return (
+    <>
+      {ROLES.map((role) => (
+        <option key={role} value={role}>
+          {roleLabel(role)}
+        </option>
+      ))}
+      {roles.length ? (
+        <optgroup label="Added roles">
+          {roles.map((role) => (
+            <option key={role.id} value={`job:${role.id}`}>
+              {role.name} ({roleLabel(role.accessRole)} access)
+            </option>
+          ))}
+        </optgroup>
+      ) : null}
+    </>
+  )
+}
 
 async function readJson<T>(response: Response): Promise<T | null> {
   return (await response.json().catch(() => null)) as T | null
@@ -30,20 +66,24 @@ function rolePillClass(role: Role): string {
 /** The add-person form: who they are, the password they sign in with, their job role, and their WhatsApp number. */
 function PersonEditor({
   roles,
+  admin,
   onCancel,
   onSaved,
 }: {
   roles: JobRole[]
+  admin: AccountLink | undefined
   onCancel: () => void
-  onSaved: (accounts: AccountLink[]) => void
+  onSaved: (accounts: AccountLink[], transferred: boolean) => void
 }) {
   const [value, setValue] = useState<PersonDraft>(EMPTY_PERSON)
   const [error, setError] = useState('')
   const [pending, setPending] = useState(false)
-  const jobRole = roles.find((role) => role.id === value.jobRoleId)
   const ready = value.name.trim() && value.email.trim() && value.password.length >= MIN_PASSWORD_LENGTH
 
   async function save() {
+    const jobRoleId = jobIdOf(value.role)
+    const transfer = value.role === 'admin' && Boolean(admin)
+    if (value.role === 'admin' && !confirmTransfer(value.name.trim(), admin)) return
     setPending(true)
     setError('')
     const response = await fetch('/api/users', {
@@ -53,8 +93,8 @@ function PersonEditor({
         name: value.name,
         email: value.email,
         password: value.password,
-        jobRoleId: value.jobRoleId || null,
-        accessRole: value.accessRole,
+        ...(jobRoleId ? { jobRoleId } : { role: value.role }),
+        ...(transfer ? { transfer: true } : {}),
         phoneNumber: value.phoneNumber,
       }),
     })
@@ -64,7 +104,7 @@ function PersonEditor({
       setError(body?.error ?? 'Could not add that person')
       return
     }
-    onSaved(body?.accounts ?? [])
+    onSaved(body?.accounts ?? [], transfer)
   }
 
   return (
@@ -99,34 +139,9 @@ function PersonEditor({
         </div>
         <div className="field">
           <label htmlFor="person-role">Role</label>
-          <select id="person-role" value={value.jobRoleId} onChange={(event) => setValue({ ...value, jobRoleId: event.target.value })}>
-            <option value="">No role</option>
-            {roles.map((role) => (
-              <option key={role.id} value={role.id}>
-                {role.name}
-              </option>
-            ))}
+          <select id="person-role" value={value.role} onChange={(event) => setValue({ ...value, role: event.target.value as RoleChoice })}>
+            <RoleOptions roles={roles} />
           </select>
-        </div>
-        <div className="field">
-          <label htmlFor="person-access">Access</label>
-          {jobRole ? (
-            <select id="person-access" value={jobRole.accessRole} disabled>
-              <option value={jobRole.accessRole}>{roleLabel(jobRole.accessRole)} (from role)</option>
-            </select>
-          ) : (
-            <select
-              id="person-access"
-              value={value.accessRole}
-              onChange={(event) => setValue({ ...value, accessRole: event.target.value as JobAccessRole })}
-            >
-              {JOB_ACCESS_ROLES.map((access) => (
-                <option key={access} value={access}>
-                  {roleLabel(access)}
-                </option>
-              ))}
-            </select>
-          )}
         </div>
         <div className="field">
           <label htmlFor="person-phone">WhatsApp number (optional)</label>
@@ -141,7 +156,10 @@ function PersonEditor({
           />
         </div>
       </div>
-      <p className="stamp">Share the password with them. They can sign in straight away.</p>
+      <p className="stamp">
+        Share the password with them. They can sign in straight away.
+        {value.role === 'admin' && admin ? ` ${admin.name} becomes Manager: there is one admin.` : ''}
+      </p>
       {error ? <p className="formerror" role="alert">{error}</p> : null}
       <div className="actions">
         <button type="button" className="btn-pri" disabled={pending || !ready} onClick={() => void save()}>
@@ -186,14 +204,20 @@ export function PeoplePanel({ me }: { me: Me }) {
     void loadRoles()
   }, [loadAccounts, loadRoles])
 
-  async function assign(account: AccountLink, jobRoleId: string) {
-    if (jobRoleId === (account.jobRole?.id ?? '')) return
+  const admin = accounts?.find((account) => account.role === 'admin')
+
+  /** Moves a person to a built-in role (via the Settings role route, which guards the single admin) or an added one. */
+  async function assign(account: AccountLink, choice: RoleChoice) {
+    if (choice === choiceOf(account)) return
+    const jobRoleId = jobIdOf(choice)
+    const transfer = choice === 'admin' && Boolean(admin)
+    if (choice === 'admin' && !confirmTransfer(account.name, admin)) return
     setPendingId(account.id)
     setRowErrors((current) => ({ ...current, [account.id]: '' }))
-    const response = await fetch(`/api/users/${account.id}/job-role`, {
+    const response = await fetch(jobRoleId ? `/api/users/${account.id}/job-role` : `/api/users/${account.id}/role`, {
       method: 'PUT',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ jobRoleId: jobRoleId || null }),
+      body: JSON.stringify(jobRoleId ? { jobRoleId } : transfer ? { role: choice, transfer: true } : { role: choice }),
     })
     setPendingId(null)
     const body = await readJson<{ error?: string; accounts?: AccountLink[] }>(response)
@@ -202,7 +226,7 @@ export function PeoplePanel({ me }: { me: Me }) {
       return
     }
     if (body?.accounts) setAccounts(body.accounts)
-    if (account.id === me.id) router.refresh()
+    if (account.id === me.id || transfer) router.refresh()
   }
 
   async function addRole() {
@@ -231,8 +255,8 @@ export function PeoplePanel({ me }: { me: Me }) {
           <div>
             <h3>People</h3>
             <p>
-              Everyone who signs in to Tierra or messages Tierra Bot. Their role sets what they can see and do: a role with
-              manager access sees finance, office access does not. The admin is set from Settings.
+              Everyone who signs in to Tierra or messages Tierra Bot. Each person holds one role: Admin, Manager, Office,
+              or a role added below. There is one admin; making someone admin turns the current admin into a manager.
             </p>
           </div>
           {canManage && !adding ? (
@@ -246,10 +270,12 @@ export function PeoplePanel({ me }: { me: Me }) {
         {adding ? (
           <PersonEditor
             roles={roles}
+            admin={admin}
             onCancel={() => setAdding(false)}
-            onSaved={(next) => {
+            onSaved={(next, transferred) => {
               setAccounts(next)
               setAdding(false)
+              if (transferred) router.refresh()
             }}
           />
         ) : null}
@@ -261,8 +287,14 @@ export function PeoplePanel({ me }: { me: Me }) {
                 <div>
                   <div className="relname">
                     <b>{account.name}</b>
-                    {account.jobRole ? <span className="pill ink">{account.jobRole.name}</span> : null}
-                    <span className={rolePillClass(account.role)}>{roleLabel(account.role)} access</span>
+                    {account.jobRole ? (
+                      <>
+                        <span className="pill ink">{account.jobRole.name}</span>
+                        <span className="pill grey">{roleLabel(account.role)} access</span>
+                      </>
+                    ) : (
+                      <span className={rolePillClass(account.role)}>{roleLabel(account.role)}</span>
+                    )}
                   </div>
                   <div className="stamp">
                     {[account.email, account.phoneNumber ? `+${account.phoneNumber}` : 'No WhatsApp number', account.id === me.id ? 'You' : null]
@@ -277,21 +309,16 @@ export function PeoplePanel({ me }: { me: Me }) {
                 </div>
                 {canManage ? (
                   <div className="field">
-                    <label className="sr" htmlFor={`jobrole-${account.id}`}>
+                    <label className="sr" htmlFor={`role-${account.id}`}>
                       Role for {account.name}
                     </label>
                     <select
-                      id={`jobrole-${account.id}`}
-                      value={account.jobRole?.id ?? ''}
+                      id={`role-${account.id}`}
+                      value={choiceOf(account)}
                       disabled={pendingId === account.id}
-                      onChange={(event) => void assign(account, event.target.value)}
+                      onChange={(event) => void assign(account, event.target.value as RoleChoice)}
                     >
-                      <option value="">No role</option>
-                      {roles.map((role) => (
-                        <option key={role.id} value={role.id}>
-                          {role.name}
-                        </option>
-                      ))}
+                      <RoleOptions roles={roles} />
                     </select>
                   </div>
                 ) : null}
@@ -311,14 +338,27 @@ export function PeoplePanel({ me }: { me: Me }) {
           <div>
             <h3>Roles</h3>
             <p>
-              Job roles at Tierra, such as Production head, Accountant or QC and stores. Each gives its holders manager or
-              office access. Giving someone a role sets their access to match, except the admin, who stays admin.
+              Admin, Manager and Office are built in. Add job roles such as Production head, Accountant or QC and stores;
+              each gives its holders manager access (finance included) or office access.
             </p>
           </div>
         </div>
         <article className="card p6" style={{ display: 'flex', flexDirection: 'column', gap: 16, maxWidth: 760 }}>
-          {roles.length === 0 ? <p className="stamp">No roles yet.</p> : null}
           <div className="rels">
+            {ROLES.map((role) => {
+              const holders = (accounts ?? []).filter((account) => account.role === role && !account.jobRole)
+              return (
+                <div className="rel" key={role} style={{ gridTemplateColumns: '1fr' }}>
+                  <div>
+                    <div className="relname">
+                      <b>{roleLabel(role)}</b>
+                      <span className="pill grey">Built in</span>
+                    </div>
+                    <div className="stamp">{holders.length ? holders.map((account) => account.name).join(', ') : 'Nobody holds this role'}</div>
+                  </div>
+                </div>
+              )
+            })}
             {roles.map((role) => {
               const holders = (accounts ?? []).filter((account) => account.jobRole?.id === role.id)
               return (

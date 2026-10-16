@@ -174,6 +174,7 @@ export class MemoryStore implements Store {
     if (!user) return 'not_found'
     if (role === 'admin' && this.users.some((row) => row.role === 'admin' && row.id !== userId)) return 'admin_taken'
     user.role = role
+    user.jobRoleId = null
     return 'ok'
   }
 
@@ -184,6 +185,7 @@ export class MemoryStore implements Store {
       if (row.role === 'admin' && row.id !== userId) row.role = 'manager'
     }
     user.role = 'admin'
+    user.jobRoleId = null
     return 'ok'
   }
 
@@ -214,13 +216,14 @@ export class MemoryStore implements Store {
     return toPublicUser(user)
   }
 
-  async setUserJobRole(userId: string, jobRoleId: string | null): Promise<'ok' | 'not_found' | 'role_not_found'> {
+  async setUserJobRole(userId: string, jobRoleId: string): Promise<'ok' | 'not_found' | 'role_not_found' | 'is_admin'> {
     const user = this.users.find((row) => row.id === userId)
     if (!user) return 'not_found'
-    const role = jobRoleId ? this.jobRoles.find((row) => row.id === jobRoleId) : null
-    if (jobRoleId && !role) return 'role_not_found'
-    user.jobRoleId = jobRoleId
-    if (role && user.role !== 'admin') user.role = role.accessRole
+    const role = this.jobRoles.find((row) => row.id === jobRoleId)
+    if (!role) return 'role_not_found'
+    if (user.role === 'admin') return 'is_admin'
+    user.jobRoleId = role.id
+    user.role = role.accessRole
     return 'ok'
   }
 

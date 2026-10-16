@@ -1828,7 +1828,7 @@ describe('masters: people and job roles', () => {
     expect(((await signIn.json()) as { user: { role: string } }).user.role).toBe('manager')
   })
 
-  it('assigns a job role, giving its access to everyone but the admin', async () => {
+  it('gives each person one role: a built-in one or a job role with its access', async () => {
     const admin = await login(ctx.app, 'alex.thomas@tierra.test')
     const added = await send(admin, 'POST', '/api/job-roles', { name: 'QC and stores', accessRole: 'office' })
     const { role } = (await added.json()) as { role: { id: string } }
@@ -1838,13 +1838,41 @@ describe('masters: people and job roles', () => {
     const accounts = ((await joshy.json()) as { accounts: Account[] }).accounts
     expect(accounts.find((account) => account.id === 'usr_joshy')).toMatchObject({ role: 'office', jobRole: { name: 'QC and stores' } })
 
-    const alex = await send(admin, 'PUT', '/api/users/usr_alex/job-role', { jobRoleId: role.id })
-    expect(((await alex.json()) as { accounts: Account[] }).accounts.find((account) => account.id === 'usr_alex')?.role).toBe('admin')
+    const back = await send(admin, 'PUT', '/api/users/usr_joshy/role', { role: 'manager' })
+    expect(((await back.json()) as { accounts: Account[] }).accounts.find((account) => account.id === 'usr_joshy')).toMatchObject({
+      role: 'manager',
+      jobRole: null,
+    })
 
-    const cleared = await send(admin, 'PUT', '/api/users/usr_joshy/job-role', { jobRoleId: null })
-    expect(((await cleared.json()) as { accounts: Account[] }).accounts.find((account) => account.id === 'usr_joshy')?.jobRole).toBeNull()
+    const alex = await send(admin, 'PUT', '/api/users/usr_alex/job-role', { jobRoleId: role.id })
+    expect(alex.status).toBe(409)
+    expect(((await alex.json()) as { error: string }).error).toContain('Make someone else admin first')
+    expect((await send(admin, 'PUT', '/api/users/usr_joshy/job-role', { jobRoleId: null })).status).toBe(400)
     expect((await send(admin, 'PUT', '/api/users/usr_joshy/job-role', { jobRoleId: 'jrl_missing' })).status).toBe(404)
-    expect((await send(admin, 'PUT', '/api/users/usr_nobody/job-role', { jobRoleId: null })).status).toBe(404)
+    expect((await send(admin, 'PUT', '/api/users/usr_nobody/job-role', { jobRoleId: role.id })).status).toBe(404)
+  })
+
+  it('adds a person as manager, office or, by transfer, the new admin', async () => {
+    const admin = await login(ctx.app, 'alex.thomas@tierra.test')
+    const office = await send(admin, 'POST', '/api/users', { name: 'Arya', email: 'arya@tierra.test', password: 'storeroom1' })
+    expect(office.status).toBe(201)
+    const manager = await send(admin, 'POST', '/api/users', { name: 'Anshid', email: 'anshid@tierra.test', password: 'ledgers12', role: 'manager' })
+    const byEmail = (accounts: Account[], email: string) => accounts.find((account) => account.email === email)
+    const afterManager = ((await manager.json()) as { accounts: Account[] }).accounts
+    expect(byEmail(afterManager, 'arya@tierra.test')).toMatchObject({ role: 'office', jobRole: null })
+    expect(byEmail(afterManager, 'anshid@tierra.test')?.role).toBe('manager')
+
+    const second = await send(admin, 'POST', '/api/users', { name: 'JP', email: 'jp@tierra.test', password: 'ownerpass', role: 'admin' })
+    expect(second.status).toBe(409)
+    expect(((await second.json()) as { error: string }).error).toContain('Alex Thomas is the admin')
+    expect(byEmail(((await (await ctx.app.request('/api/relations', { headers: { cookie: admin } })).json()) as { accounts: Account[] }).accounts, 'jp@tierra.test')).toBeUndefined()
+
+    const moved = await send(admin, 'POST', '/api/users', { name: 'JP', email: 'jp@tierra.test', password: 'ownerpass', role: 'admin', transfer: true })
+    expect(moved.status).toBe(201)
+    const accounts = ((await moved.json()) as { accounts: Account[] }).accounts
+    expect(byEmail(accounts, 'jp@tierra.test')?.role).toBe('admin')
+    expect(byEmail(accounts, 'alex.thomas@tierra.test')?.role).toBe('manager')
+    expect(accounts.filter((account) => account.role === 'admin')).toHaveLength(1)
   })
 })
 

@@ -273,7 +273,7 @@ export class DrizzleStore implements Store {
     try {
       const updated = await this.db
         .update(schema.users)
-        .set({ role })
+        .set({ role, jobRoleId: null })
         .where(eq(schema.users.id, userId))
         .returning({ id: schema.users.id })
       return updated.length > 0 ? 'ok' : 'not_found'
@@ -291,7 +291,7 @@ export class DrizzleStore implements Store {
         .update(schema.users)
         .set({ role: 'manager' })
         .where(and(eq(schema.users.role, 'admin'), ne(schema.users.id, userId)))
-      await tx.update(schema.users).set({ role: 'admin' }).where(eq(schema.users.id, userId))
+      await tx.update(schema.users).set({ role: 'admin', jobRoleId: null }).where(eq(schema.users.id, userId))
       return 'ok'
     })
   }
@@ -330,7 +330,7 @@ export class DrizzleStore implements Store {
     }
   }
 
-  async setUserJobRole(userId: string, jobRoleId: string | null): Promise<'ok' | 'not_found' | 'role_not_found'> {
+  async setUserJobRole(userId: string, jobRoleId: string): Promise<'ok' | 'not_found' | 'role_not_found' | 'is_admin'> {
     return this.db.transaction(async (tx) => {
       const [user] = await tx
         .select({ role: schema.users.role })
@@ -338,12 +338,12 @@ export class DrizzleStore implements Store {
         .where(eq(schema.users.id, userId))
         .for('update')
       if (!user) return 'not_found'
-      const [role] = jobRoleId ? await tx.select().from(schema.jobRoles).where(eq(schema.jobRoles.id, jobRoleId)) : [null]
-      if (jobRoleId && !role) return 'role_not_found'
-      const access = role && user.role !== 'admin' ? { role: role.accessRole } : {}
+      const [role] = await tx.select().from(schema.jobRoles).where(eq(schema.jobRoles.id, jobRoleId))
+      if (!role) return 'role_not_found'
+      if (user.role === 'admin') return 'is_admin'
       await tx
         .update(schema.users)
-        .set({ jobRoleId, ...access })
+        .set({ jobRoleId: role.id, role: role.accessRole })
         .where(eq(schema.users.id, userId))
       return 'ok'
     })

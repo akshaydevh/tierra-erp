@@ -242,14 +242,16 @@ const newPersonSchema = z.object({
   name: z.string().trim().min(1).max(80),
   email: z.string().trim().email(),
   password: z.string(),
-  /** A job role sets the access level; without one, accessRole does (office when left out). */
+  /** Either a built-in role (office when neither is given) or a job role, which brings its access level. */
+  role: roleSchema.optional(),
   jobRoleId: z.string().min(1).nullish(),
-  accessRole: jobAccessRoleSchema.optional(),
+  /** Needed to make the new person admin while there is one: the current admin becomes a manager. */
+  transfer: z.boolean().optional(),
   phoneNumber: z.string().optional(),
 })
 
 const userJobRoleSchema = z.object({
-  jobRoleId: z.string().min(1).nullable(),
+  jobRoleId: z.string().min(1),
 })
 
 /**
@@ -1183,6 +1185,13 @@ export function createApp(deps: AppDeps) {
       ? (await deps.store.listJobRoles()).find((role) => role.id === input.jobRoleId)
       : null
     if (input.jobRoleId && !jobRole) return c.json({ error: 'That role does not exist' }, 404)
+    const makeAdmin = !jobRole && input.role === 'admin'
+    if (makeAdmin && !input.transfer) {
+      const admin = (await deps.store.listAccountLinks()).find((account) => account.role === 'admin')
+      if (admin) {
+        return c.json({ error: `${admin.name} is the admin. Transfer the admin role to make ${input.name} admin.` }, 409)
+      }
+    }
     let phone: string | null = null
     if (input.phoneNumber && /\d/.test(input.phoneNumber)) {
       phone = normalizePhone(input.phoneNumber, deps.defaultCountryCode)
@@ -1193,11 +1202,13 @@ export function createApp(deps: AppDeps) {
     const created = await deps.store.createUser({
       name: input.name,
       email: input.email,
-      role: jobRole?.accessRole ?? input.accessRole ?? 'office',
+      // An admin is added as a manager, then handed the admin role in one step that demotes the current admin.
+      role: jobRole?.accessRole ?? (makeAdmin ? 'manager' : (input.role as Exclude<Role, 'admin'> | undefined) ?? 'office'),
       passwordHash: await hashPassword(input.password),
       jobRoleId: jobRole?.id ?? null,
     })
     if (created === 'email_taken') return c.json({ error: `${input.email} already has an account` }, 409)
+    if (makeAdmin) await deps.store.transferAdmin(created.id)
     if (phone) await deps.store.saveRelation({ userId: created.id, phoneNumber: phone })
     return c.json({ user: created, accounts: await deps.store.listAccountLinks() }, 201)
   })
@@ -1211,6 +1222,9 @@ export function createApp(deps: AppDeps) {
     const result = await deps.store.setUserJobRole(c.req.param('id'), parsed.data.jobRoleId)
     if (result === 'not_found') return c.json({ error: 'That account does not exist' }, 404)
     if (result === 'role_not_found') return c.json({ error: 'That role does not exist' }, 404)
+    if (result === 'is_admin') {
+      return c.json({ error: 'Make someone else admin first. There must always be one admin.' }, 409)
+    }
     return c.json({ accounts: await deps.store.listAccountLinks() })
   })
 
