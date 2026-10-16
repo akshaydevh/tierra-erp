@@ -4,7 +4,10 @@ import { grnLinesOn } from '../queries/finance'
 import { importMeta, isNotImported } from '../queries/meta'
 import type { Person } from '../whatsapp/people'
 import { replyChatJid, deliveryAddress, type ChatKind, type IncomingMessage } from '../whatsapp/parse'
+import { COSTING_PURPOSE, COSTING_SUBJECT, defaultCostingDate, generateDailyCosting, sendCostingTo, type GeneratedCosting } from '../workflows/daily-costing'
 import { generateDailyReport, REPORT_PURPOSE, REPORT_SUBJECT, sendReportTo, type GeneratedReport } from '../workflows/daily-report'
+import { defaultMisMonthFor, generateMis, MIS_PURPOSE, MIS_SUBJECT, sendMisTo, type GeneratedMis } from '../workflows/mis'
+import { parseMonth } from '../domain/months'
 import type { AgentDeps } from './deps'
 import { isDeskThread, postToDesk, sendBotText } from './outbox'
 import { ensureTierraPrefix } from './send'
@@ -16,7 +19,11 @@ import { ensureTierraPrefix } from './send'
  *   without a day both are for yesterday before noon (India time) and for today after; the reply always names the
  *   day, and replying to it with only a day moves what it saved to that day;
  * - "daily report [15 July]", "DR 15/7", "report for 8 Oct", "yesterday's report": the PDF (manager, admin), only
- *   when the day is all that follows ("report 2 cartons damaged on 15/7" is a sentence for the agent).
+ *   when the day is all that follows ("report 2 cartons damaged on 15/7" is a sentence for the agent);
+ * - "costing report [4/7]", "daily costing 4 July", "costing for yesterday": the daily costing PDF (manager, admin),
+ *   for the last production day in SAP when no day is named;
+ * - "MIS June", "monthly MIS for 2026-06", "send the MIS": the monthly MIS PDF (manager, admin), for the last complete
+ *   SAP month when no month is named.
  * And the finance gate: an office user asking for bank balances or receivables gets a plain no, never the model.
  */
 
@@ -28,6 +35,11 @@ const ESTIMATE = new RegExp(
 )
 const REPORT = /^(?:(?:please\s+)?(?:send|share|give)\s+(?:me\s+)?)?(?:the\s+)?(?:daily\s+report|dr|report)\b(?:\s+(?:for|of|on|dated))?\s*(.*?)\s*[.?!]*$/i
 const REPORT_DAY_FIRST = /^(?:(?:please\s+)?(?:send|share|give)\s+(?:me\s+)?)?(yesterday|today)['’]?s?\s+(?:daily\s+)?report\s*[.?!]*$/i
+const COSTING = /^(?:(?:please\s+)?(?:send|share|give)\s+(?:me\s+)?)?(?:the\s+)?(?:daily\s+costing(?:\s+report)?|costing\s+report|costing)\b(?:\s+(?:for|of|on|dated))?\s*(.*?)\s*[.?!]*$/i
+const MIS = /^(?:(?:please\s+)?(?:send|share|give)\s+(?:me\s+)?)?(?:the\s+)?(?:monthly\s+)?mis(?:\s+report)?\b(?:\s+(?:for|of))?\s*(.*?)\s*[.?!]*$/i
+/** Only a month after "MIS": "June", "June 2026", "jun-26", "2026-06", "6/2026", "last month". */
+const MONTH_ONLY = /^(?:(?:this|current|last|previous)\s+month|\d{4}-\d{1,2}|\d{1,2}[/.-](?:\d{4}|\d{2})|[a-z]+\.?(?:\s*['’-]?\s*(?:\d{4}|\d{2}))?)$/i
+const COSTING_DAY_FIRST = /^(?:(?:please\s+)?(?:send|share|give)\s+(?:me\s+)?)?(yesterday|today)['’]?s?\s+(?:daily\s+)?costing(?:\s+report)?\s*[.?!]*$/i
 
 /** Bank balances, receivables, payables, payments: finance questions the office role does not get answers to. */
 const FINANCE_QUESTION =
@@ -63,6 +75,29 @@ export function parseReportRequest(text: string, today: string): ReportRequest |
   const rest = match[1]?.trim() ?? ''
   if (!rest) return { dateText: null }
   return parseWholeDate(rest, today) ? { dateText: rest } : null
+}
+
+/** A request for the daily costing PDF; null when the text is not one ("costing of FGTYM60 last month" is for the agent). */
+export function parseCostingRequest(text: string, today: string): ReportRequest | null {
+  const value = text.trim()
+  const dayFirst = COSTING_DAY_FIRST.exec(value)
+  if (dayFirst) return { dateText: dayFirst[1]! }
+  const match = COSTING.exec(value)
+  if (!match) return null
+  const rest = match[1]?.trim() ?? ''
+  if (!rest) return { dateText: null }
+  return parseWholeDate(rest, today) ? { dateText: rest } : null
+}
+
+export type MisRequest = { monthText: string | null }
+
+/** A request for the monthly MIS PDF; null when the text is not one ("MIS shows a loss, why?" is for the agent). */
+export function parseMisRequest(text: string, today: string): MisRequest | null {
+  const match = MIS.exec(text.trim())
+  if (!match) return null
+  const rest = match[1]?.trim() ?? ''
+  if (!rest) return { monthText: null }
+  return MONTH_ONLY.test(rest) && parseMonth(rest, today) ? { monthText: rest } : null
 }
 
 export function isFinanceQuestion(text: string): boolean {
@@ -146,6 +181,30 @@ export async function deliverReport(deps: AgentDeps, message: IncomingMessage, r
   return ensureTierraPrefix(report.caption)
 }
 
+/** Sends a generated costing report into the chat the request came from (a link on the desk). */
+export async function deliverCosting(deps: AgentDeps, message: IncomingMessage, report: GeneratedCosting): Promise<string> {
+  const chat = replyChatJid(message)
+  if (isDeskThread(chat)) {
+    const body = ensureTierraPrefix(`${report.caption}\n\n[${report.fileName}](/api/documents/${report.documentId})`)
+    await postToDesk(deps.store, chat, body, { subjectType: COSTING_SUBJECT, subjectId: report.payload.date }, COSTING_PURPOSE)
+    return body
+  }
+  await sendCostingTo(deps, { number: deliveryAddress(chat), remoteJid: chat }, report)
+  return ensureTierraPrefix(report.caption)
+}
+
+/** Sends a generated MIS into the chat the request came from (a link on the desk). */
+export async function deliverMis(deps: AgentDeps, message: IncomingMessage, report: GeneratedMis): Promise<string> {
+  const chat = replyChatJid(message)
+  if (isDeskThread(chat)) {
+    const body = ensureTierraPrefix(`${report.caption}\n\n[${report.fileName}](/api/documents/${report.documentId})`)
+    await postToDesk(deps.store, chat, body, { subjectType: MIS_SUBJECT, subjectId: report.payload.month.slice(0, 7) }, MIS_PURPOSE)
+    return body
+  }
+  await sendMisTo(deps, { number: deliveryAddress(chat), remoteJid: chat }, report)
+  return ensureTierraPrefix(report.caption)
+}
+
 /**
  * Returns undefined when the message is none of these commands. Group chats never get them: inputs and the report
  * are internal.
@@ -198,6 +257,23 @@ export async function handleReportCommand(
     if (!date) return undefined
     const report = await generateDailyReport(deps, { date, userId: speaker.userId })
     return deliverReport(deps, message, report)
+  }
+
+  const costing = parseCostingRequest(text, istDay(deps.now()))
+  if (costing) {
+    if (!allowed(FINANCE_ROLES, speaker)) return sendBotText(deps, message, 'Costing and margins are for the manager and the admin.')
+    const dataAsOf = (await importMeta(deps.sapSql)).dataAsOf
+    const date = costing.dateText ? parseReportDate(costing.dateText, istDay(deps.now())) : await defaultCostingDate(deps.sapSql, deps.now(), dataAsOf)
+    if (!date) return undefined
+    return deliverCosting(deps, message, await generateDailyCosting(deps, { date }))
+  }
+
+  const mis = parseMisRequest(text, istDay(deps.now()))
+  if (mis) {
+    if (!allowed(FINANCE_ROLES, speaker)) return sendBotText(deps, message, 'The MIS is for the manager and the admin.')
+    const month = mis.monthText ? parseMonth(mis.monthText, istDay(deps.now())) : await defaultMisMonthFor(deps.sapSql, deps.now())
+    if (!month) return undefined
+    return deliverMis(deps, message, await generateMis(deps, { month }))
   }
 
   if (speaker.role === 'office' && isFinanceQuestion(text)) return sendBotText(deps, message, FINANCE_ONLY)

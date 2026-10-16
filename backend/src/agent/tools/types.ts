@@ -20,6 +20,10 @@ export type Effect =
   | { kind: 'send_file'; file: FileLink; doc: DocKey & { docNo: string }; caption: string }
   /** Generates the day's daily report (a new stored version) and sends its PDF to the chat after the reply. */
   | { kind: 'send_daily_report'; date: string }
+  /** Generates the day's costing report (production cost and margin from SAP) and sends its PDF after the reply. */
+  | { kind: 'send_costing_report'; date: string }
+  /** Generates the month's MIS (Costing P&L, customer-wise, margin comparison) and sends its PDF after the reply. */
+  | { kind: 'send_mis_report'; month: string }
   /** Saves daily report inputs the person typed (manpower, banana estimate ...). */
   | { kind: 'set_daily_inputs'; date: string; patch: DailyInputsPatch }
   /** A chart under the reply on the desk (charts.ts). */

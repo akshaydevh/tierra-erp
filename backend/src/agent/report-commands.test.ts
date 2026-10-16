@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { defaultInputDate, namedDay } from '../domain/daily-report'
 import { gateEffects } from './effect-gate'
-import { isFinanceQuestion, parseEstimate, parseManpower, parseReportRequest } from './report-commands'
+import { isFinanceQuestion, parseCostingRequest, parseEstimate, parseManpower, parseMisRequest, parseReportRequest } from './report-commands'
 
 const TODAY = '2026-10-09'
 
@@ -30,6 +30,27 @@ describe('daily report commands', () => {
     expect(parseReportRequest("yesterday's report", TODAY)).toEqual({ dateText: 'yesterday' })
     expect(parseReportRequest('report the carton shortage to procurement', TODAY)).toBeNull()
     expect(parseReportRequest('what is in the daily report?', TODAY)).toBeNull()
+  })
+
+  it('reads a daily costing request, and leaves costing questions to the agent', () => {
+    expect(parseCostingRequest('costing report 4/7', TODAY)).toEqual({ dateText: '4/7' })
+    expect(parseCostingRequest('Daily costing for 4 July', TODAY)).toEqual({ dateText: '4 July' })
+    expect(parseCostingRequest('send me the daily costing report', TODAY)).toEqual({ dateText: null })
+    expect(parseCostingRequest("yesterday's costing", TODAY)).toEqual({ dateText: 'yesterday' })
+    expect(parseCostingRequest('costing', TODAY)).toEqual({ dateText: null })
+    expect(parseCostingRequest('costing of FGTYMBSK60 last month', TODAY)).toBeNull()
+    expect(parseCostingRequest('what is the costing per kg of Too Yumm?', TODAY)).toBeNull()
+    expect(parseReportRequest('costing report 4/7', TODAY)).toBeNull()
+  })
+
+  it('reads a monthly MIS request, and leaves MIS questions to the agent', () => {
+    expect(parseMisRequest('MIS June', TODAY)).toEqual({ monthText: 'June' })
+    expect(parseMisRequest('monthly MIS for 2026-06', TODAY)).toEqual({ monthText: '2026-06' })
+    expect(parseMisRequest('send the MIS', TODAY)).toEqual({ monthText: null })
+    expect(parseMisRequest('MIS report of last month', TODAY)).toEqual({ monthText: 'last month' })
+    expect(parseMisRequest('mis', TODAY)).toEqual({ monthText: null })
+    expect(parseMisRequest('MIS shows a loss in June, why?', TODAY)).toBeNull()
+    expect(parseMisRequest('mismatch in the invoice', TODAY)).toBeNull()
   })
 
   it('takes the report shortcut only when the day is all that follows', () => {

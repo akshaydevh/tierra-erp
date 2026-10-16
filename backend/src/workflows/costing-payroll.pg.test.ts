@@ -1,9 +1,11 @@
+import pdfParse from 'pdf-parse'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { createApp, type AppDeps } from '../app'
 import { routeMessage } from '../agent/route'
 import { seedIfEmpty } from '../db/seed'
 import { dataBrief } from '../queries/brief'
 import { costingKpis, materialMix, productionCost, productionCosts, skuMargins, stockValuation, wipVariance } from '../queries/costing'
+import { buildDailyCosting, productionDays } from '../queries/daily-costing'
 import { attendanceMonth, headcount, leaveSummary, payrollSummary, peelingMonth, personPayments, reconciliation, salaryPayments } from '../queries/payroll'
 import { FakeModel, callTool, say, useTools, type SeenRequest } from '../test/fake-llm'
 import { connect, runMigrations, startPostgres, type Connection } from '../test/postgres'
@@ -180,6 +182,125 @@ describe.skipIf(!pg)('costing and payroll (synthetic fixtures)', () => {
     expect(((await (await get('/api/costing?tab=valuation', alex)).json()) as Record<string, any>).valuation.total).toBe(33500)
     expect(((await (await get('/api/costing/production/701', joshy)).json()) as Record<string, any>).costPerPc).toBe(5)
     expect((await get('/api/costing/production/999', joshy)).status).toBe(404)
+  })
+
+  it('builds the daily costing report for a production day and sends it as a PDF to the manager and the admin', async () => {
+    // 701 issued on 18 March and received on 19 March; ZFGA100 invoiced to its customer ZC001 at 25 on 31 March
+    expect(await productionDays(conn.sql, '2026-03-31')).toEqual(['2026-03-19'])
+    const day = await buildDailyCosting(conn.sql, { date: '2026-03-19', dataAsOf: '2026-03-31', now: NOW })
+    expect(day.kind).toBe('full')
+    expect(day.columns.map((column) => [column.itemCode, column.customers])).toEqual([['ZFGA100', ['Alpha Snacks Pvt Ltd']]])
+    expect(day.total).toMatchObject({ pouches: 1000, kg: 100, sales: 25000, materialCost: 5000, marginOnMaterial: 20000, productionCost: 0, contribution: 20000, bananaKg: 100 })
+    expect(day.total.lines).toMatchObject({ banana: 4000, packing: 1000, oil: 0, flavour: 0, lpg: 0 })
+    expect(day.orders).toEqual([expect.objectContaining({ docNo: 'PR/25-26/1', share: 1, pricePerPouch: 25, priceSource: 'customer', priceDate: '2026-03-31' })])
+    expect(day.yieldPct).toBe(100)
+    expect((await buildDailyCosting(conn.sql, { date: '2026-03-18', dataAsOf: '2026-03-31', now: NOW })).kind).toBe('no_production')
+    expect((await buildDailyCosting(conn.sql, { date: '2026-04-02', dataAsOf: '2026-03-31', now: NOW })).kind).toBe('no_data')
+
+    const sent: Array<{ number: string; fileName?: string }> = []
+    deps = {
+      ...deps,
+      evolution: {
+        ...deps.evolution,
+        sendMedia: async (input: { number: string; fileName?: string }) => {
+          sent.push(input)
+          return { messageId: `out-m-${++seq}` }
+        },
+      } as unknown as EvolutionClient,
+    }
+    expect(await send('costing report 19/3', 'joshy')).toContain('Daily costing 19 Mar 2026: 100 kg made, sales ₹25,000, material ₹5,000 (₹50/kg)')
+    // no day: the last production day up to the SAP data date
+    expect(await send('daily costing', 'alex')).toContain('Daily costing 19 Mar 2026')
+    expect(sent.map((media) => [media.number, media.fileName])).toEqual([
+      [PHONES.joshy, 'daily-costing-2026-03-19.pdf'],
+      [PHONES.alex, 'daily-costing-2026-03-19.pdf'],
+    ])
+    expect(await send('costing report 19/3', 'anju')).toContain('Costing and margins are for the manager and the admin.')
+    expect(sent).toHaveLength(2)
+    expect(llm.requests).toHaveLength(0)
+
+    const { alex, anju, get } = await cookies()
+    expect((await get('/api/reports/costing/2026-03-19.pdf', anju)).status).toBe(403)
+    const pdf = await get('/api/reports/costing/2026-03-19.pdf', alex)
+    expect(pdf.status).toBe(200)
+    expect(pdf.headers.get('content-type')).toBe('application/pdf')
+    const latest = (await (await get('/api/reports/costing/latest', alex)).json()) as Record<string, any>
+    expect(latest.payload).toMatchObject({ date: '2026-03-19', kind: 'full' })
+  })
+
+  it('sends the daily costing PDF when the agent is asked in words', async () => {
+    llm.script(useTools(callTool('daily_costing_report', { date: '2026-03-19' })), say('Here is the costing for 19 March.'))
+    const sent: string[] = []
+    deps = {
+      ...deps,
+      evolution: { ...deps.evolution, sendMedia: async (input: { fileName: string }) => (sent.push(input.fileName), { messageId: `out-m-${++seq}` }) } as unknown as EvolutionClient,
+    }
+    expect(await send('can you share the costing sheet for 19 March?', 'joshy')).toContain('Here is the costing for 19 March.')
+    const [result] = toolResults(llm.last()!) as [Record<string, any>]
+    expect(result).toMatchObject({ queued: true, found: true, total: { kg: 100, sales: 25000, materialCost: 5000, marginOnMaterial: 20000, marginPerKg: 200 } })
+    expect(result.notInSap.join(' ')).toContain('Power and water')
+    expect(sent).toEqual(['daily-costing-2026-03-19.pdf'])
+  })
+
+  it('sends the monthly MIS as a PDF to the manager and the admin, and serves it and its rules on the web', async () => {
+    const sent: Array<{ number: string; fileName?: string }> = []
+    deps = {
+      ...deps,
+      evolution: {
+        ...deps.evolution,
+        sendMedia: async (input: { number: string; fileName?: string }) => {
+          sent.push(input)
+          return { messageId: `out-m-${++seq}` }
+        },
+      } as unknown as EvolutionClient,
+    }
+    expect(await send('MIS March 2026', 'joshy')).toContain('MIS March 2026: 100 kg, sales value ₹0.25L, margin on materials ₹0.2L (₹200/kg)')
+    // no month: the SAP data reaches 31 March, so March
+    expect(await send('send the MIS', 'alex')).toContain('MIS March 2026')
+    expect(sent.map((media) => [media.number, media.fileName])).toEqual([
+      [PHONES.joshy, 'mis-2026-03.pdf'],
+      [PHONES.alex, 'mis-2026-03.pdf'],
+    ])
+    expect(await send('MIS March', 'anju')).toContain('The MIS is for the manager and the admin.')
+    expect(sent).toHaveLength(2)
+    expect(llm.requests).toHaveLength(0)
+
+    const { alex, anju, get } = await cookies()
+    expect((await get('/api/reports/mis/2026-03.pdf', anju)).status).toBe(403)
+    const pdf = await get('/api/reports/mis/2026-03.pdf', alex)
+    expect(pdf.headers.get('content-type')).toBe('application/pdf')
+    const { text } = await pdfParse(Buffer.from(await pdf.arrayBuffer()))
+    for (const expected of ['MONTHLY MIS · MARCH 2026', 'Summary', 'EBITDA reconciliation', 'Costing profit and loss statement', 'Customer-wise, March 2026', 'Alpha Snacks', 'Customer-wise margin comparison', 'Sales by item', 'GL accounts, March 2026', 'Industrial Gas Expenses']) {
+      expect(text).toContain(expected)
+    }
+    const latest = (await (await get('/api/reports/mis/latest', alex)).json()) as Record<string, any>
+    expect(latest.payload).toMatchObject({ month: '2026-03-01', current: { ebitda: 18001.1 } })
+    expect((await get('/api/reports/mis/June', alex)).status).toBe(400)
+
+    const app = createApp(deps)
+    const put = (body: unknown) => app.request('/api/reports/mis-settings', { method: 'PUT', headers: { cookie: alex, 'content-type': 'application/json' }, body: JSON.stringify(body) })
+    expect((await put({ glRules: [{ match: 'Industrial Gas%', line: 'nonsense' }] })).status).toBe(400)
+    expect((await put({ customerRules: [{ card: 'ZC001', label: 'Alpha Brand' }] })).status).toBe(200)
+    const settings = (await (await get('/api/reports/mis-settings', alex)).json()) as Record<string, any>
+    expect(settings.customerRules).toEqual([{ card: 'ZC001', label: 'Alpha Brand' }])
+    expect(settings.defaults.glRules.length).toBeGreaterThan(50)
+    expect(((await (await get('/api/reports/mis/2026-03', alex)).json()) as Record<string, any>).payload.customers[0].label).toBe('Alpha Brand')
+    expect((await put({ customerRules: [] })).status).toBe(200)
+    expect((await get('/api/reports/mis-settings', anju)).status).toBe(403)
+  })
+
+  it('sends the MIS when the agent is asked in words', async () => {
+    llm.script(useTools(callTool('mis_report', { month: '2026-03' })), say('Here is the March MIS.'))
+    const sent: string[] = []
+    deps = {
+      ...deps,
+      evolution: { ...deps.evolution, sendMedia: async (input: { fileName: string }) => (sent.push(input.fileName), { messageId: `out-m-${++seq}` }) } as unknown as EvolutionClient,
+    }
+    expect(await send('how did we do in March? share the MIS please', 'joshy')).toContain('Here is the March MIS.')
+    const [result] = toolResults(llm.last()!) as [Record<string, any>]
+    expect(result).toMatchObject({ queued: true, found: true, month: { productionKg: 100, marginOnMaterials: 20000, momPerKg: 200, ebitda: 18001.1 }, labour: 'none' })
+    expect(result.customers).toEqual([expect.objectContaining({ customer: 'Alpha Snacks', kg: 100 })])
+    expect(sent).toEqual(['mis-2026-03.pdf'])
   })
 
   it('serves Payroll to the admin alone, and says when the HR files are not loaded', async () => {

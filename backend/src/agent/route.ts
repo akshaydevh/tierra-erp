@@ -10,13 +10,15 @@ import { isOpenTask } from '../tasks/done'
 import { resolvePeople, type Person } from '../whatsapp/people'
 import { deliveryAddress, replyChatJid, type ChatKind, type IncomingMessage } from '../whatsapp/parse'
 import { handleDoneReply, handleReaction, sendTestPdf, TEST_PDF } from './commands'
-import { deliverReport, handleReportCommand } from './report-commands'
+import { deliverCosting, deliverMis, deliverReport, handleReportCommand } from './report-commands'
 import { handleHrCommand } from './hr-commands'
 import { isHrQuestion, withoutEmployeeCodes } from './hr-gate'
 
 /** The payroll tools: a turn that used them never gets SAP files attached. */
 const HR_TOOLS = new Set(['payroll_summary', 'salary_payments', 'attendance', 'leave_requests'])
 import { generateDailyReport } from '../workflows/daily-report'
+import { generateDailyCosting } from '../workflows/daily-costing'
+import { generateMis } from '../workflows/mis'
 import type { AgentDeps } from './deps'
 import { intakePdf } from './intake'
 import { DOCUMENT_SUBJECT, applyAttachmentRule, deliverFile, lastDocumentFor, withNotes } from './files'
@@ -168,6 +170,24 @@ export async function sendEffectFiles(deps: AgentDeps, message: IncomingMessage,
       } catch (error) {
         console.error('Could not send the daily report', error)
         await sendBotText(deps, message, 'The daily report could not be sent. Try again.').catch(() => undefined)
+      }
+      continue
+    }
+    if (effect.kind === 'send_costing_report') {
+      try {
+        await deliverCosting(deps, message, await generateDailyCosting(deps, { date: effect.date }))
+      } catch (error) {
+        console.error('Could not send the daily costing report', error)
+        await sendBotText(deps, message, 'The daily costing report could not be sent. Try again.').catch(() => undefined)
+      }
+      continue
+    }
+    if (effect.kind === 'send_mis_report') {
+      try {
+        await deliverMis(deps, message, await generateMis(deps, { month: effect.month }))
+      } catch (error) {
+        console.error('Could not send the MIS', error)
+        await sendBotText(deps, message, 'The MIS could not be sent. Try again.').catch(() => undefined)
       }
       continue
     }

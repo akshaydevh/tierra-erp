@@ -11,8 +11,9 @@ import type { Effect } from './tools'
  *   a yes / no names production, packing or cartoning, and the day is the one the message names (none named: the
  *   default, yesterday before noon India time and today after). A note is saved only when the message says
  *   "note:", and then it is the message's own text after it.
- * Anything else is dropped and the reply asks the person to say it themselves. create_task, send_so_pdf and
- * send_daily_report pass: they only add a task for a person to read, or send a PDF into the same chat.
+ * Anything else is dropped and the reply asks the person to say it themselves. create_task, send_so_pdf,
+ * send_daily_report, send_costing_report and send_mis_report pass: they only add a task for a person to read, or send
+ * a PDF into the same chat.
  */
 
 const DONE_WORDS = /\b(?:done|complete|completed|finish|finished|close|closed|mark(?:ed)?\s+(?:it\s+)?(?:as\s+)?done)\b/i

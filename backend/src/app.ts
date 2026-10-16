@@ -74,6 +74,11 @@ import {
   paymentsByPurpose,
 } from './queries/finance'
 import { generateDailyReport, sendReportTo } from './workflows/daily-report'
+import { defaultCostingDate, generateDailyCosting } from './workflows/daily-costing'
+import { defaultMisMonthFor, generateMis } from './workflows/mis'
+import { buildMis } from './queries/mis'
+import { DEFAULT_CUSTOMER_RULES, DEFAULT_GL_RULES, GL_LINES, SETTING_CUSTOMER_RULES, SETTING_GL_RULES, validCustomerRules, validGlRules } from './domain/mis'
+import { buildDailyCosting } from './queries/daily-costing'
 import { NO_LABOUR, costingKpis, costingMonths, materialMix, monthOf, productionCost, productionCosts, skuMargins, stockValuation, wipVariance } from './queries/costing'
 import { attendanceMonth, headcount, hrMeta, hrOrNull, leaveSummary, payrollSummary, peelingMonth, reconciliation } from './queries/payroll'
 import { addMonths, lastDayOf } from './domain/months'
@@ -720,6 +725,77 @@ export function createApp(deps: AppDeps) {
       return c.json({ error: 'WhatsApp gateway is unavailable' }, 502)
     }
     return c.json({ sent: true, version: report.record.version, message: `Sent the report for ${date} to your WhatsApp.` })
+  })
+
+  /**
+   * The daily costing report (manager and admin): /api/reports/costing/2026-07-04 is the payload,
+   * /api/reports/costing/2026-07-04.pdf the PDF (stored each time, like a send); "latest" is the last production day.
+   */
+  app.get('/api/reports/costing/:file', async (c) => {
+    const user = await userWithRole(c, FINANCE_ROLES)
+    if (user instanceof Response) return user
+    const file = c.req.param('file')
+    const pdf = file.endsWith('.pdf')
+    const name = pdf ? file.slice(0, -4) : file
+    const dataAsOf = (await importMeta(sap)).dataAsOf
+    const date = name === 'latest' ? await defaultCostingDate(sap, deps.now(), dataAsOf) : name
+    if (!isIsoDay(date)) return c.json({ error: 'Use a date like 2026-07-04' }, 400)
+    if (!pdf) return c.json({ payload: await buildDailyCosting(sap, { date, dataAsOf, now: deps.now() }) })
+    const report = await generateDailyCosting(deps, { date })
+    c.header('content-type', 'application/pdf')
+    c.header('content-disposition', inlineDisposition(report.fileName).replace(/^inline/, c.req.query('download') ? 'attachment' : 'inline'))
+    c.header('x-content-type-options', 'nosniff')
+    c.header('cache-control', 'no-store')
+    return c.body(new Uint8Array(report.pdf))
+  })
+
+  /**
+   * The monthly MIS (manager and admin): /api/reports/mis/2026-06 is the payload, /api/reports/mis/2026-06.pdf the PDF
+   * (stored each time); "latest" is the last complete SAP month.
+   */
+  app.get('/api/reports/mis/:file', async (c) => {
+    const user = await userWithRole(c, FINANCE_ROLES)
+    if (user instanceof Response) return user
+    const file = c.req.param('file')
+    const pdf = file.endsWith('.pdf')
+    const name = pdf ? file.slice(0, -4) : file
+    const month = name === 'latest' ? await defaultMisMonthFor(sap, deps.now()) : monthOf(name)
+    if (!month) return c.json({ error: 'Use a month like 2026-06' }, 400)
+    if (!pdf) return c.json({ payload: await buildMis(deps, { month, dataAsOf: (await importMeta(sap)).dataAsOf, now: deps.now() }) })
+    const report = await generateMis(deps, { month })
+    c.header('content-type', 'application/pdf')
+    c.header('content-disposition', inlineDisposition(report.fileName).replace(/^inline/, c.req.query('download') ? 'attachment' : 'inline'))
+    c.header('x-content-type-options', 'nosniff')
+    c.header('cache-control', 'no-store')
+    return c.body(new Uint8Array(report.pdf))
+  })
+
+  /** The MIS rules: which GL account feeds which MIS line, and which MIS customer a finished good counts under. */
+  app.get('/api/reports/mis-settings', async (c) => {
+    const user = await userWithRole(c, FINANCE_ROLES)
+    if (user instanceof Response) return user
+    const [gl, customers] = await Promise.all([deps.store.getSetting(SETTING_GL_RULES), deps.store.getSetting(SETTING_CUSTOMER_RULES)])
+    return c.json({
+      glRules: validGlRules(gl) ?? [],
+      customerRules: validCustomerRules(customers) ?? [],
+      defaults: { glRules: DEFAULT_GL_RULES, customerRules: DEFAULT_CUSTOMER_RULES },
+      lines: GL_LINES,
+    })
+  })
+
+  /** Saves either list (or both); the saved rules are tried before the defaults. An empty list goes back to the defaults. */
+  app.put('/api/reports/mis-settings', async (c) => {
+    const user = await userWithRole(c, FINANCE_ROLES)
+    if (user instanceof Response) return user
+    const body = (await c.req.json().catch(() => null)) as { glRules?: unknown; customerRules?: unknown } | null
+    if (!body || (body.glRules === undefined && body.customerRules === undefined)) return c.json({ error: 'Send glRules and / or customerRules' }, 400)
+    const gl = body.glRules === undefined ? undefined : validGlRules(body.glRules)
+    const customers = body.customerRules === undefined ? undefined : validCustomerRules(body.customerRules)
+    if (gl === null) return c.json({ error: `Each GL rule is { match, line } with line one of: ${GL_LINES.join(', ')} (side: income or expense, optional)` }, 400)
+    if (customers === null) return c.json({ error: 'Each customer rule is { label } with a card or an item-code prefix' }, 400)
+    if (gl) await deps.store.saveSetting(SETTING_GL_RULES, gl, user.id)
+    if (customers) await deps.store.saveSetting(SETTING_CUSTOMER_RULES, customers, user.id)
+    return c.json({ glRules: gl ?? null, customerRules: customers ?? null })
   })
 
   // ------------------------------------------------------------------------------------------ P7: costing, payroll
