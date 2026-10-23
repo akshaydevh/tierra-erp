@@ -21,6 +21,7 @@ import { generateDailyCosting } from '../workflows/daily-costing'
 import { generateMis } from '../workflows/mis'
 import type { AgentDeps } from './deps'
 import { intakePdf } from './intake'
+import { PhotoReadError, describePhoto } from './packet-reader'
 import { DOCUMENT_SUBJECT, applyAttachmentRule, deliverFile, lastDocumentFor, withNotes } from './files'
 import { documentByKey, parseDocKey } from '../queries/documents'
 import type { LlmMessage } from './llm'
@@ -39,7 +40,8 @@ import { forChannel, toolsFor, type Effect, type ToolContext } from './tools'
  * One WhatsApp (or desk) turn, deterministic first:
  * 1. a reaction -> task done (never the model);
  * 2. a quote of a bot message that has a subject -> that subject is pinned for the chat;
- * 3. a PDF -> the intake hook;
+ * 3. a PDF -> the intake hook; a photo from a Tierra account in a direct chat -> the photo reader, then step 5 with
+ *    what it read;
  * 4. commands: *done* on task notices, *test pdf*, *proceed* on a PO, the daily report's, *payroll June*;
  * 5. anything else -> the pre-resolver, then the tool loop, in the audience scope.ts builds.
  */
@@ -244,6 +246,8 @@ export type AnswerInput = {
   audience: Audience
   text: string
   quotedText: string | null
+  /** What the photo reader saw on a photo sent with the message (packet-reader.ts describePhoto). */
+  photo?: string | null
 }
 
 /** The pre-resolver and the tool loop for one message. Exported for the eval and the tests. */
@@ -279,6 +283,7 @@ export async function answerTurn(deps: AgentDeps, input: AnswerInput): Promise<L
       speakerLabel: speakerLabel(audience, input.speaker),
       references: describeRefs(refs),
       pinned: await pinnedSubject(deps, pin, audience),
+      photo: input.photo ?? null,
     }),
     tools: forChannel(toolsFor(audience), ctx.via),
     ctx,
@@ -339,6 +344,8 @@ export async function routeMessage(
   if (message.pdf) {
     return intakePdf(deps, { message, chatKind, speaker, accounts, documentId: desk?.documentId })
   }
+  const photo = await photoTurn(deps, message, chatKind, speaker)
+  if (photo !== undefined) return photo
 
   const text = message.text?.trim() ?? ''
   const finished = await handleDoneReply(deps, message, chatKind, speaker, text)
@@ -363,9 +370,61 @@ export async function routeMessage(
   if (audience.kind === 'public' && audience.reason === 'unmapped_group') {
     return unmappedGroup(deps, message, speaker, accounts)
   }
-  const result = await answerTurn(deps, { message, speaker, audience, text, quotedText })
+  return replyWithAgent(deps, { message, speaker, audience, text, quotedText })
+}
+
+const PHOTO_UNAVAILABLE = 'The photo could not be downloaded. Send it again.'
+const PHOTO_UNREADABLE = 'I could not read that photo. Send a sharper one of the batch code, or type the code.'
+const PHOTO_QUESTION = 'What is this packet? Identify the product and its batch.'
+
+/**
+ * A photo from a Tierra account in a direct chat (or the self chat): read once, then answered by the tool loop with
+ * the caption as the question. Customer groups and unknown numbers never get a photo read; the caption alone goes on.
+ * Undefined: not handled here.
+ */
+async function photoTurn(
+  deps: AgentDeps,
+  message: IncomingMessage,
+  chatKind: ChatKind,
+  speaker: Person | null,
+): Promise<string | null | undefined> {
+  if (message.kind !== 'image' || !speaker || chatKind === 'group' || isDeskThread(message.remoteJid) || !deps.readPhoto) {
+    return undefined
+  }
+  const audience = await buildAudience(deps, { chatKind, remoteJid: message.remoteJid, speaker })
+  if (audience.kind !== 'internal') return undefined
+  let image: { content: Buffer; mimeType: string }
+  try {
+    const downloaded = message.embeddedBase64 ? null : await deps.evolution.downloadMedia(message.raw)
+    const raw = message.embeddedBase64 ?? downloaded!.base64
+    const media = raw.includes(',') ? raw.slice(raw.indexOf(',') + 1) : raw
+    const mimeType = downloaded?.mimeType.startsWith('image/') ? downloaded.mimeType : 'image/jpeg'
+    image = { content: Buffer.from(media, 'base64'), mimeType }
+  } catch (error) {
+    console.error('Could not download a WhatsApp photo', error)
+    return sendBotText(deps, message, PHOTO_UNAVAILABLE)
+  }
+  let photo: string
+  try {
+    const read = await deps.readPhoto(image.content, image.mimeType)
+    console.log(`photo ${message.id}: ${read.kind}, ${read.quality}, batch ${read.batchNo ? 'read' : 'none'}`)
+    if (read.quality === 'unreadable' && !message.text?.trim()) return sendBotText(deps, message, PHOTO_UNREADABLE)
+    photo = describePhoto(read)
+  } catch (error) {
+    if (!(error instanceof PhotoReadError)) throw error
+    console.error('The photo reader failed', error.message)
+    return sendBotText(deps, message, PHOTO_UNREADABLE)
+  }
+  const text = message.text?.trim() || PHOTO_QUESTION
+  return replyWithAgent(deps, { message, speaker, audience, text, quotedText: message.quotedText?.trim() || null, photo }, message.text?.trim() ?? '')
+}
+
+/** The tool loop's answer, its allowed effects and files. gateText: the person's own words (a photo's caption). */
+async function replyWithAgent(deps: AgentDeps, input: AnswerInput, gateText: string = input.text): Promise<string> {
+  const { message, speaker } = input
+  const result = await answerTurn(deps, input)
   // only what the person asked for in this message: text the model read can never record stock or finish a task
-  const gated = gateEffects(result.effects, text, deps.now())
+  const gated = gateEffects(result.effects, gateText, deps.now())
   const problems = await runEffects(deps, gated.allowed, speaker, isDeskThread(message.remoteJid) ? 'desk' : 'whatsapp')
   // charts reach the desk only (show_chart is not offered on WhatsApp)
   const charts = isDeskThread(message.remoteJid) ? chartParts(gated.allowed, result.toolRuns) : []

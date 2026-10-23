@@ -629,6 +629,47 @@ export const COMPAT: Record<string, Spec> = {
   },
 }
 
+/**
+ * erp.batches / erp.batch_movements over ERPNext's SAP Batch records (tools/erpnext-import, step batches) in place
+ * of the SAP ones in 14_batches.sql, which read OBTN/OITL (empty views here). Same columns and types.
+ */
+export const BATCH_VIEWS = `
+DROP VIEW erp.batches;
+DROP VIEW erp.batch_movements;
+CREATE VIEW erp.batch_movements AS
+SELECT split_part(b.custom_sap_ref, ':', 2)::integer AS batch_id,
+       b.batch_no,
+       b.item_code,
+       m.log_entry::integer AS log_entry,
+       m.kind,
+       m.doc_no,
+       m.doc_date,
+       m.party_code,
+       m.party_name,
+       m.whs_code,
+       m.qty::numeric AS qty,
+       m.production_order,
+       m.production_entry::integer AS production_entry
+FROM erpnext."tabSAP Batch" b
+JOIN erpnext."tabSAP Batch Movement" m ON m.parent = b.name
+WHERE b.custom_sap_ref ~ '^OBTN:[0-9]+$';
+CREATE VIEW erp.batches AS
+SELECT split_part(b.custom_sap_ref, ':', 2)::integer AS batch_id,
+       b.batch_no,
+       b.item_code,
+       coalesce(i.item_name, b.item_name) AS item_name,
+       b.in_date,
+       b.mnf_date,
+       b.exp_date,
+       coalesce(b.qty_in, 0)::numeric AS qty_in,
+       coalesce(b.qty_out, 0)::numeric AS qty_out,
+       coalesce(b.on_hand, 0)::numeric AS on_hand,
+       b.warehouses
+FROM erpnext."tabSAP Batch" b
+LEFT JOIN erpnext."tabItem" i ON i.name = b.item_code
+WHERE b.custom_sap_ref ~ '^OBTN:[0-9]+$';
+`
+
 /** {table: [[column, type], ...]} from the generated SAP DDL. */
 export function sapTables(ddl = readFileSync(SAP_SCHEMA_FILE, 'utf8')): Map<string, Array<[string, string]>> {
   const tables = new Map<string, Array<[string, string]>>()
@@ -687,5 +728,8 @@ export async function applyCompat(sql: SapSql): Promise<void> {
     if (!has_hr) await tx.unsafe(readFileSync(HR_SQL_FILE, 'utf8').replaceAll('{s}', 'hr'))
     await tx.unsafe(`create schema erp`)
     for (const file of erpFiles) await tx.unsafe(readFileSync(join(ERP_SQL_DIR, file), 'utf8'))
+    // the mirror has these only once the importer's batches step ran (mirror.ts OPTIONAL_TABLES)
+    const [{ has_batches }] = await tx`select to_regclass('erpnext."tabSAP Batch Movement"') is not null as has_batches`
+    if (has_batches) await tx.unsafe(BATCH_VIEWS)
   })
 }

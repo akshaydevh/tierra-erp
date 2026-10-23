@@ -2,6 +2,7 @@ import { serve } from '@hono/node-server'
 import { drizzle, type PostgresJsDatabase } from 'drizzle-orm/postgres-js'
 import postgres from 'postgres'
 import { readPurchaseOrder } from './agent/extract'
+import { readPhoto } from './agent/packet-reader'
 import { createApprovalIntent } from './agent/approval-intent'
 import { createCallClassifier, createPdfClassifier, createProceedClassifier } from './agent/classifiers'
 import { createChatModel } from './agent/llm'
@@ -56,6 +57,7 @@ async function main() {
     sapSql: sql,
     files,
     readPurchaseOrder: (pdf) => readPurchaseOrder(pdf, env, pdfClassifier),
+    readPhoto: (image, mimeType) => readPhoto(image, mimeType, env),
     dataBrief: () => dataBrief(sql, store),
     chatModel: createChatModel(env),
     approvalIntent: createApprovalIntent(env),

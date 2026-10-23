@@ -166,8 +166,8 @@ INSERT INTO sap.pdn1 (docentry, linenum, visorder, basetype, baseentry, baseline
 INSERT INTO sap.obtn (absentry, itemcode, sysnumber, distnumber) VALUES
   (1, 'ZRMBN', 1, 'B-TEST-01');
 
-INSERT INTO sap.oitl (logentry, itemcode, docentry, docline, doctype, docdate) VALUES
-  (1, 'ZRMBN', 502, 1, 20, '2026-03-22');
+INSERT INTO sap.oitl (logentry, itemcode, docentry, docline, doctype, docdate, stockeff, cardcode, cardname, loccode) VALUES
+  (1, 'ZRMBN', 502, 1, 20, '2026-03-22', 1, 'ZV002', 'Gamma Packaging Co', 'RM01');
 
 INSERT INTO sap.itl1 (logentry, itemcode, sysnumber, quantity, mdabsentry) VALUES
   (1, 'ZRMBN', 1, 800, 1);

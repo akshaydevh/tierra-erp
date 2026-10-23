@@ -41,7 +41,15 @@ export const MIRROR_TABLES: ReadonlyArray<readonly [string, string?]> = [
   ['tabJournal Entry'],
   ['tabJournal Entry Account'],
   ['tabGL Entry', 'is_cancelled = 0'],
+  ['tabSAP Batch'],
+  ['tabSAP Batch Movement', "parenttype = 'SAP Batch'"],
 ]
+
+/**
+ * Tables that exist only once tools/erpnext-import has run a step (custom DocTypes): a site without them is
+ * mirrored without them, and their erp views stay the SAP ones (empty in ERPNext mode). A restart picks them up.
+ */
+export const OPTIONAL_TABLES: ReadonlySet<string> = new Set(['tabSAP Batch', 'tabSAP Batch Movement'])
 
 /** The documents that get a stable integer id (SAP's DocEntry when the record came from SAP). */
 const ID_DOCTYPES = [
@@ -86,6 +94,8 @@ const INDEXES: ReadonlyArray<readonly [string, string]> = [
   ['tabJournal Entry Account', 'parent'],
   ['tabGL Entry', 'voucher_no'],
   ['tabGL Entry', 'party'],
+  ['tabSAP Batch', 'batch_no'],
+  ['tabSAP Batch Movement', 'parent'],
 ]
 
 function pgType(dataType: string): string {
@@ -118,6 +128,8 @@ export type MirrorResult = { tables: number; rows: number; ms: number }
 export class ErpnextMirror {
   private pool: mysql.Pool
   private ready = false
+  /** MIRROR_TABLES less the optional ones this site does not have. */
+  private present: ReadonlyArray<readonly [string, string?]> = MIRROR_TABLES.filter(([t]) => !OPTIONAL_TABLES.has(t))
 
   constructor(
     private sql: SapSql,
@@ -180,7 +192,8 @@ export class ErpnextMirror {
       ).map((r) => `${r.t}\u0000${r.c}`),
     )
     const tables = new Set([...have].map((key) => key.split('\u0000')[0]))
-    for (const [table] of MIRROR_TABLES) {
+    this.present = MIRROR_TABLES.filter(([t]) => cols.has(t) || !OPTIONAL_TABLES.has(t))
+    for (const [table] of this.present) {
       const list = cols.get(table)
       if (!list) throw new Error(`ERPNext has no table ${table}`)
       if (!tables.has(table)) {
@@ -196,6 +209,7 @@ export class ErpnextMirror {
       (await this.sql<Array<{ i: string }>>`select indexname as i from pg_indexes where schemaname = 'erpnext'`).map((r) => r.i),
     )
     for (const [table, column] of INDEXES) {
+      if (!this.present.some(([t]) => t === table)) continue
       const index = `${table}_${column}_idx`.replace(/[^A-Za-z0-9_]/g, '_').toLowerCase()
       if (!indexes.has(index)) await this.sql.unsafe(`create index ${qi(index)} on erpnext.${qi(table)} (${qi(column)})`)
     }
@@ -213,7 +227,7 @@ export class ErpnextMirror {
   /** Row count and last change per table: equal fingerprints mean ERPNext has not changed since the last copy. */
   async fingerprint(): Promise<string> {
     const parts: string[] = []
-    for (const [table, where] of MIRROR_TABLES) {
+    for (const [table, where] of this.present) {
       const [rows] = await this.pool.query<mysql.RowDataPacket[]>(
         `select count(*) as n, max(modified) as m from ${mi(table)}${where ? ` where ${where}` : ''}`,
       )
@@ -242,7 +256,7 @@ export class ErpnextMirror {
     const started = Date.now()
     const cols = await this.columns()
     const data = new Map<string, Array<Record<string, unknown>>>()
-    for (const [table, where] of MIRROR_TABLES) {
+    for (const [table, where] of this.present) {
       const [rows] = await this.pool.query<mysql.RowDataPacket[]>(
         `select * from ${mi(table)}${where ? ` where ${where}` : ''}`,
       )
@@ -250,7 +264,7 @@ export class ErpnextMirror {
     }
     let total = 0
     await this.sql.begin(async (tx) => {
-      for (const [table] of MIRROR_TABLES) {
+      for (const [table] of this.present) {
         const list = cols.get(table) ?? []
         const rows = data.get(table) ?? []
         // DELETE, not TRUNCATE: TRUNCATE's exclusive lock would block (and can deadlock) a reader mid-query
@@ -302,6 +316,6 @@ export class ErpnextMirror {
       await tx`insert into erpnext._sync (id, synced_at, rows, ms) values (1, now(), ${total}, ${Date.now() - started})
                on conflict (id) do update set synced_at = excluded.synced_at, rows = excluded.rows, ms = excluded.ms`
     })
-    return { tables: MIRROR_TABLES.length, rows: total, ms: Date.now() - started }
+    return { tables: this.present.length, rows: total, ms: Date.now() - started }
   }
 }

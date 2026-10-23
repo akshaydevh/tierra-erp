@@ -73,6 +73,40 @@ CUSTOM_FIELDS = (
 )
 
 
+BATCH_DOCTYPE = "SAP Batch"
+BATCH_MOVEMENT_DOCTYPE = "SAP Batch Movement"
+
+# SAP's batches as a record of their own: ERPNext's Batch needs batch tracking on the item, which ERPNext refuses
+# to switch on for items that already have stock transactions, and would then ask for a batch on every delivery.
+# (fieldname, fieldtype, label, options, in_list_view)
+BATCH_MOVEMENT_FIELDS = [
+    ("log_entry", "Int", "SAP Log Entry", None, 0),
+    ("kind", "Data", "Movement", None, 1),
+    ("doc_no", "Data", "Document", None, 1),
+    ("doc_date", "Date", "Date", None, 1),
+    ("party_code", "Data", "Party Code", None, 0),
+    ("party_name", "Data", "Party", None, 1),
+    ("whs_code", "Data", "Warehouse", None, 0),
+    ("qty", "Float", "Quantity", None, 1),
+    ("production_order", "Data", "Production Order", None, 0),
+    ("production_entry", "Int", "Production Order Entry", None, 0),
+]
+BATCH_FIELDS = [
+    ("batch_no", "Data", "Batch No", None, 1),
+    ("item_code", "Link", "Item", "Item", 1),
+    ("item_name", "Data", "Item Name", None, 0),
+    ("in_date", "Date", "Received On", None, 1),
+    ("mnf_date", "Date", "Manufactured On", None, 0),
+    ("exp_date", "Date", "Expires On", None, 0),
+    ("qty_in", "Float", "Quantity In", None, 0),
+    ("qty_out", "Float", "Quantity Out", None, 0),
+    ("on_hand", "Float", "On Hand at Cut-over", None, 1),
+    ("warehouses", "Small Text", "Stock by Warehouse", None, 0),
+    ("custom_sap_ref", "Data", "SAP Ref", None, 0),
+    ("movements", "Table", "Movements", BATCH_MOVEMENT_DOCTYPE, 0),
+]
+
+
 def log(msg):
     print(msg, flush=True)
 
@@ -140,6 +174,40 @@ def custom_fields(erp):
         erp.insert(doc)
         have.add((dt, fieldname))
     log(f"custom fields: {len(CUSTOM_FIELDS)}")
+
+
+def _doctype_fields(fields):
+    out = []
+    for fieldname, fieldtype, label, options, in_list in fields:
+        f = {"fieldname": fieldname, "fieldtype": fieldtype, "label": label, "in_list_view": in_list,
+             "read_only": 1 if fieldtype != "Table" else 0}
+        if options:
+            f["options"] = options
+        if fieldname in ("batch_no", "custom_sap_ref", "item_code"):
+            f["search_index"] = 1
+            f["in_standard_filter"] = 1 if fieldname != "custom_sap_ref" else 0
+        out.append(f)
+    return out
+
+
+def batch_doctypes(erp):
+    """The SAP Batch record and its movement rows (custom DocTypes, no developer mode needed). Safe to run again.
+    Needs System Manager: the service user has it, so the importer calls this too."""
+    if not erp.exists("DocType", BATCH_MOVEMENT_DOCTYPE):
+        erp.insert({"doctype": "DocType", "name": BATCH_MOVEMENT_DOCTYPE, "module": "Stock", "custom": 1,
+                    "istable": 1, "editable_grid": 0, "fields": _doctype_fields(BATCH_MOVEMENT_FIELDS)})
+        log(f"doctype {BATCH_MOVEMENT_DOCTYPE}")
+    if not erp.exists("DocType", BATCH_DOCTYPE):
+        erp.insert({"doctype": "DocType", "name": BATCH_DOCTYPE, "module": "Stock", "custom": 1,
+                    "autoname": "hash", "title_field": "batch_no", "show_title_field_in_link": 1,
+                    "search_fields": "batch_no,item_code,item_name", "sort_field": "in_date", "sort_order": "DESC",
+                    "fields": _doctype_fields(BATCH_FIELDS),
+                    "permissions": [
+                        {"role": "System Manager", "read": 1, "write": 1, "create": 1, "delete": 1},
+                        {"role": "Stock Manager", "read": 1, "write": 1, "create": 1},
+                        {"role": "Stock User", "read": 1},
+                    ]})
+        log(f"doctype {BATCH_DOCTYPE}")
 
 
 def account(erp, name, parent, **kw):
@@ -235,6 +303,7 @@ def run():
     fiscal_years(erp)
     settings(erp)
     custom_fields(erp)
+    batch_doctypes(erp)
     accounts(erp)
     service_user(erp)
     if os.environ.get("ERPNEXT_SKIP_DB_USER") == "1":

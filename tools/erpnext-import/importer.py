@@ -2,7 +2,8 @@
 
 Order: masters -> openings (party ledgers and bank balances before the window) -> the import window (SO, PO, then
 GRNs and A/R invoices in date order, A/P invoices, payments) -> closing SAP-closed orders -> one stock
-reconciliation on the cut-over date so stock equals SAP's OITW. Every record carries custom_sap_ref; a record
+reconciliation on the cut-over date so stock equals SAP's OITW -> SAP's batches and their movements as SAP Batch
+records (the find_batch tool). Every record carries custom_sap_ref; a record
 ERPNext already has is never made again, so a re-run continues where the last one stopped.
 """
 import json
@@ -19,6 +20,7 @@ import psycopg
 from psycopg.rows import dict_row
 
 from erp import Erp, ErpError
+from setup_site import BATCH_DOCTYPE, batch_doctypes
 
 SAP_PG = os.environ.get("SAP_PG", "postgres://tierra:tierra@localhost:5432/tierra")
 COMPANY = os.environ.get("ERP_COMPANY", "Tierra Food India")
@@ -40,7 +42,7 @@ COST_CENTER = f"Main - {ABBR}"
 
 STEPS = ["uoms", "item_groups", "warehouses", "items", "party_groups", "parties", "addresses", "boms",
          "accounts", "openings", "sales_orders", "purchase_orders", "stock_docs", "ap_invoices", "payments",
-         "close_orders", "stock_reco"]
+         "close_orders", "stock_reco", "batches"]
 
 # SAP free-text units -> ERPNext UOM names (the raw text stays on the item as custom_sap_uom)
 UOM_MAP = {"kg": "Kg", "kgs": "Kg", "nos": "Nos", "no": "Nos", "pcs": "Pcs", "pc": "Pcs", "ltr": "Litre",
@@ -825,6 +827,36 @@ def step_stock_reco(c):
         "posting_date": CUTOVER.isoformat(), "posting_time": "23:59:00", "set_posting_time": 1,
         "expense_account": f"Stock Adjustment - {ABBR}", "cost_center": COST_CENTER, "items": rows, "docstatus": 1})
 
+
+def _iso(d):
+    return d.isoformat() if d else None
+
+
+def step_batches(c):
+    """SAP's batches with their movements, as SAP Batch records (one per OBTN row). Read from the erp batch views
+    (tools/sap-import/sql/erp/14_batches.sql): rebuild them with `tools/sap-import/run.py erp` first."""
+    batch_doctypes(c.erp)
+    moves = defaultdict(list)
+    for m in c.q("SELECT * FROM erp.batch_movements ORDER BY batch_id, doc_date, log_entry"):
+        moves[m["batch_id"]].append(m)
+    rows = c.q("SELECT * FROM erp.batches ORDER BY batch_id")
+
+    def one(b):
+        return c.insert("batches", f"OBTN:{b['batch_id']}", {
+            "doctype": BATCH_DOCTYPE, "batch_no": b["batch_no"], "item_code": b["item_code"],
+            "item_name": b["item_name"], "in_date": _iso(b["in_date"]), "mnf_date": _iso(b["mnf_date"]),
+            "exp_date": _iso(b["exp_date"]), "qty_in": num(b["qty_in"]), "qty_out": num(b["qty_out"]),
+            "on_hand": num(b["on_hand"]), "warehouses": b["warehouses"],
+            "movements": [{
+                "log_entry": m["log_entry"], "kind": m["kind"], "doc_no": m["doc_no"], "doc_date": _iso(m["doc_date"]),
+                "party_code": m["party_code"], "party_name": m["party_name"], "whs_code": m["whs_code"],
+                "qty": num(m["qty"]), "production_order": m["production_order"],
+                "production_entry": m["production_entry"],
+            } for m in moves.get(b["batch_id"], [])],
+        })
+
+    log(f"  batches: {len(rows)} with {sum(len(v) for v in moves.values())} movements")
+    c.parallel("batches", rows, one)
 
 def run(only=None, workers=4):
     c = Ctx(workers)

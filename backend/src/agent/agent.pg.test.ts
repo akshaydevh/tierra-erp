@@ -254,6 +254,77 @@ describe.skipIf(!pg)('Agent v2 on the synthetic SAP fixture', () => {
     })
   })
 
+  describe('a packet photo', () => {
+    function photoMessage(id: string, remoteJid: string, caption?: string): IncomingMessage {
+      const event = parseWebhook({
+        event: 'messages.upsert',
+        instance: 'tierra',
+        data: { key: { id, remoteJid, fromMe: false, ...(remoteJid === GROUP ? { participant: `${ALEX_PHONE}@s.whatsapp.net` } : {}) }, message: { imageMessage: { mimetype: 'image/jpeg', ...(caption ? { caption } : {}) } } },
+      })
+      if (event.type !== 'message') throw new Error('expected a message')
+      return event.message
+    }
+
+    const read = {
+      kind: 'packet' as const,
+      quality: 'clear' as const,
+      brand: 'Test Farm',
+      product: 'Raw Banana',
+      packSize: null,
+      batchNo: 'B-TEST-0I',
+      batchNoDoubts: ['last character: I or 1'],
+      mfgDate: '22/03/26',
+      expDate: null,
+      bestBefore: null,
+      mrp: null,
+      notes: null,
+    }
+
+    it('reads the photo in a direct chat and finds the batch through a misread character', async () => {
+      const images: Array<{ bytes: string; mime: string }> = []
+      deps.readPhoto = async (image, mime) => {
+        images.push({ bytes: image.toString(), mime })
+        return read
+      }
+      ;(deps.evolution as unknown as { downloadMedia: unknown }).downloadMedia = async () => ({
+        base64: `data:image/png;base64,${Buffer.from('png-bytes').toString('base64')}`,
+        mimeType: 'image/png',
+        fileName: 'photo.png',
+      })
+      llm.script(
+        useTools(callTool('find_batch', { batch_no: 'B-TEST-0I', product: 'Raw Banana' })),
+        (request) => {
+          const result = lastTool(request)
+          return say(`${result.matches[0].batchNo} (${result.match}), from ${result.details[0].receivedFrom[0].supplier}.`)
+        },
+      )
+      await handleIncoming(deps, photoMessage('dm-photo', `${ALEX_PHONE}@s.whatsapp.net`), 'personal')
+      expect(images).toEqual([{ bytes: 'png-bytes', mime: 'image/png' }])
+      const turn = String(llm.requests[0]?.messages.at(-1)?.content)
+      expect(turn).toContain('What is this packet?')
+      expect(turn).toContain('- Batch code as read: B-TEST-0I')
+      const result = JSON.parse(llm.toolResults()[0]!) as Record<string, any>
+      expect(result).toMatchObject({ found: true, match: 'close', matches: [{ batchNo: 'B-TEST-01', itemCode: 'ZRMBN' }] })
+      expect(result.note).toContain('Not an exact match')
+      expect(result.details[0]).toMatchObject({ qtyIn: 800, receivedFrom: [{ supplier: 'Gamma Packaging Co', qty: 800 }] })
+      expect(sent.at(-1)?.text).toContain('B-TEST-01 (close), from Gamma Packaging Co.')
+    })
+
+    it('never reads a photo for a customer group or an unknown number', async () => {
+      let reads = 0
+      deps.readPhoto = async () => {
+        reads += 1
+        return read
+      }
+      expect(await handleIncoming(deps, photoMessage('dm-photo-unknown', '919811111111@s.whatsapp.net'), 'personal')).toBeNull()
+      llm.script(say('ok'))
+      await handleIncoming(deps, photoMessage('g-photo', GROUP, 'Tierra Bot what batch is this?'), 'group')
+      expect(reads).toBe(0)
+      expect(llm.toolResults()).toEqual([])
+      expect(llm.requests[0]?.toolNames ?? []).not.toContain('find_batch')
+    })
+  })
+
   it('never answers an unknown number in a direct chat', async () => {
     const event = parseWebhook({
       event: 'messages.upsert',

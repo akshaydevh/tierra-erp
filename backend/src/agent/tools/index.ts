@@ -2,6 +2,7 @@ import { z } from 'zod/v4'
 import { isNotImported } from '../../queries/meta'
 import type { LlmTool, LlmToolCall } from '../llm'
 import type { Audience } from '../scope'
+import { batchTools } from './batches'
 import { documentTools } from './documents'
 import { chartTools } from './charts'
 import { costingTools } from './costing'
@@ -24,6 +25,7 @@ export const CATALOGUE: readonly AgentTool[] = [
   ...masterTools,
   ...salesTools,
   ...stockTools,
+  ...batchTools,
   ...orderTools,
   ...salesOrderTools,
   ...productionTools,

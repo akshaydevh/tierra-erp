@@ -34,6 +34,8 @@ export type Env = {
   openaiModel: string
   /** The agent's tool loop; OPENAI_AGENT_MODEL, else OPENAI_MODEL. */
   openaiAgentModel: string
+  /** Reads photos sent on WhatsApp (packets); OPENAI_VISION_MODEL, else OPENAI_MODEL. Must accept images. */
+  openaiVisionModel: string
   /** Reasoning effort for the PO reader when OPENAI_MODEL is a reasoning model. Default low. */
   openaiReasoningEffort: ReasoningEffort
   /** Reasoning effort for agent turns without tools (tool turns on GPT-5.4+ always send none). Default low. */
@@ -116,6 +118,7 @@ export function loadEnv(): Env {
     openaiApiKey: process.env.OPENAI_API_KEY ?? '',
     openaiModel: process.env.OPENAI_MODEL || 'gpt-4o-mini',
     openaiAgentModel: process.env.OPENAI_AGENT_MODEL || process.env.OPENAI_MODEL || 'gpt-4o-mini',
+    openaiVisionModel: process.env.OPENAI_VISION_MODEL || process.env.OPENAI_MODEL || 'gpt-4o-mini',
     openaiReasoningEffort: asReasoningEffort(process.env.OPENAI_REASONING_EFFORT, 'low'),
     openaiAgentReasoningEffort: asReasoningEffort(process.env.OPENAI_AGENT_REASONING_EFFORT, 'low'),
     typesafeApiKey: process.env.TYPESAFE_API_KEY ?? '',

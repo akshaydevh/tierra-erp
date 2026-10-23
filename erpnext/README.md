@@ -64,6 +64,21 @@ erpnext/dev-frontend.sh
 | OPCH (window) | Purchase Invoice | service invoices on a SAP-SERVICE item and the SAP GL account |
 | ORCT, OVPM (window) | Payment Entry (on account), Journal Entry for account payments | SAP books receipts on account too |
 | OITW on 2026-10-07 | one Stock Reconciliation | stock equals SAP on the cut-over date |
+| OBTN, OBTQ, OITL/ITL1 (all) | SAP Batch (custom DocType) with SAP Batch Movement rows | step `batches`, from `erp.batches` / `erp.batch_movements` (`tools/sap-import/sql/erp/14_batches.sql`); stock by warehouse as of the cut-over. Read by the agent's `find_batch` (a packet photo's batch code) |
 
 Window: 2026-07-08 to 2026-10-07 (`IMPORT_WINDOW_START`, `IMPORT_CUTOVER`). Not imported: production orders and
-issues/receipts, journal history, batches, e-invoice / e-way bill tables, SAP approvals, SAP users.
+issues/receipts, journal history, e-invoice / e-way bill tables, SAP approvals, SAP users.
+
+Batches are records of their own, not ERPNext's Batch: that needs batch tracking on the item, which ERPNext refuses
+to switch on for items with stock transactions, and would then ask for a batch on every delivery. So SAP Batch is a
+snapshot of SAP's batch history: batches made after the cut-over are not in it. The step creates the two DocTypes
+itself (the service user has System Manager), so on a site set up before it existed run just:
+
+```bash
+psql "$SAP_PG" -1 -f tools/sap-import/sql/erp/14_batches.sql   # or tools/sap-import/run.py erp
+.venv/bin/python -I run.py import --only batches
+```
+
+The backend mirrors the two tables when the site has them (`OPTIONAL_TABLES` in `backend/src/erp/erpnext/mirror.ts`)
+and swaps `erp.batches` / `erp.batch_movements` onto them at boot (`BATCH_VIEWS` in `compat.ts`): restart it after
+the first batches import.

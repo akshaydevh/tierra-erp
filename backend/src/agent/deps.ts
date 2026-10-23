@@ -10,6 +10,7 @@ import type { Erpnext } from '../erp/erpnext'
 import type { ApprovalIntentClassifier } from './approval-intent'
 import type { CallClassifier, ProceedClassifier } from './classifiers'
 import type { ChatModel } from './llm'
+import type { PhotoRead } from './packet-reader'
 
 export type AgentDeps = {
   store: Store
@@ -20,6 +21,8 @@ export type AgentDeps = {
   files?: FileStore | null
   /** Reads a received PDF as a customer purchase order (PO gate, Z_MAT_POPRINT or LLM reader, totals guard). */
   readPurchaseOrder: (pdf: Buffer) => Promise<PoRead>
+  /** Reads a photo (a packet: brand, product, batch code, dates). Throws PhotoReadError. Absent: photos are not read. */
+  readPhoto?: (image: Buffer, mimeType: string) => Promise<PhotoRead>
   /** Open orders, short finished goods, the last day's dispatch and open tasks (the factory_brief tool). */
   dataBrief: () => Promise<DataBrief>
   /** The tool-calling chat model (OPENAI_AGENT_MODEL). */

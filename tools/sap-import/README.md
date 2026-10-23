@@ -223,6 +223,13 @@ psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -1 -c 'DROP SCHEMA IF EXISTS erp CASCADE
 pg_restore --single-transaction --no-owner --no-privileges -d "$DATABASE_URL" sap-erp.dump
 ```
 
+
+### Batch views (`sql/erp/14_batches.sql`)
+
+`erp.batches` (one row per OBTN batch: item, in-date, quantity in/out, OBTQ stock by warehouse) and
+`erp.batch_movements` (one row per batch per OITL/ITL1 stock movement with the printed document number, party,
+signed quantity and the production order a receipt or issue is based on). The agent's `find_batch` matches a
+batch code read off a packet photo against them, and tools/erpnext-import copies them into ERPNext.
 ### Attachment files for the remote
 
 The dump carries `att` (which file belongs to which document) but not the bytes. Upload those to the bucket the
