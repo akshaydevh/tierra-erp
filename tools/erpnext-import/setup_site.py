@@ -219,7 +219,8 @@ def read_env():
 
 def write_env(env):
     ENV_FILE.parent.mkdir(parents=True, exist_ok=True)
-    base = {"ERPNEXT_URL": "http://127.0.0.1:8080", "ERPNEXT_SITE": os.environ.get("ERPNEXT_SITE", "erp.localhost"),
+    base = {"ERPNEXT_URL": os.environ.get("ERPNEXT_URL", "http://127.0.0.1:8080"),
+            "ERPNEXT_SITE": os.environ.get("ERPNEXT_SITE", "erp.localhost"),
             "ERP_COMPANY": COMPANY, "ERP_COMPANY_ABBR": ABBR}
     merged = {**base, **env}
     ENV_FILE.write_text("# ERPNext keys for the local hackathon build. Never commit.\n"
@@ -236,5 +237,9 @@ def run():
     custom_fields(erp)
     accounts(erp)
     service_user(erp)
-    readonly_db_user()
+    if os.environ.get("ERPNEXT_SKIP_DB_USER") == "1":
+        # a hosted ERPNext (Railway): its MariaDB is private; the read-only user is made from inside the network
+        log("skipped the read-only MariaDB user (ERPNEXT_SKIP_DB_USER=1)")
+    else:
+        readonly_db_user()
     log("setup complete")
