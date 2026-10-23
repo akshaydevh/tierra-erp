@@ -1,4 +1,4 @@
-# The Tierra backend, built from the repository root: the erp view SQL (tools/sap-import/sql) and the SAP column
+# The Tierra backend, built from the repository root (Railway service "backend"): the erp view SQL (tools/sap-import/sql) and the SAP column
 # list (backend/test/sap-schema.sql) are read at boot when ERP_BACKEND=erpnext. Railway's backend service builds
 # this (root directory "/"). The image keeps the repo layout under /app and runs from /app/backend, so the service's
 # start command is plain `node dist/index.js` (Railway runs it without a shell).
