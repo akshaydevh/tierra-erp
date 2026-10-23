@@ -1,6 +1,7 @@
 import type { AgentDeps } from '../agent/deps'
 import { JOB_PO_PROCESS, JOB_PO_RECHECK, JOB_SO_ASK, JOB_SO_GROUP, JOB_SO_RENDER, processPo, recheckPo, renderForApproval, sendForApproval, sendToGroup } from './po-to-so'
 import { reviseSalesOrder } from './so-approval'
+import { JOB_ERPNEXT_SO, postSalesOrderToErpnext } from './erpnext-post'
 
 export const JOB_SO_REVISE = 'so.revise'
 
@@ -13,6 +14,7 @@ export async function runOrderJob(deps: AgentDeps, kind: string, payload: Record
   else if (kind === JOB_SO_ASK) await sendForApproval(deps, id('approvalId'))
   else if (kind === JOB_SO_GROUP) await sendToGroup(deps, id('approvalId'))
   else if (kind === JOB_SO_REVISE) await reviseSalesOrder(deps, id('salesOrderId'), Number(payload.fromVersion ?? 1))
+  else if (kind === JOB_ERPNEXT_SO) await postSalesOrderToErpnext(deps, id('salesOrderId'))
   else return false
   return true
 }

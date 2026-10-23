@@ -4,6 +4,7 @@ import { holderForRole } from '../domain/routing'
 import { createTaskAndNotify } from '../tasks/service'
 import { JOB_SO_GROUP, JOB_SO_RENDER, SEND_WINDOW_MS, customerGroupFor, groupJobKey, groupSendKey, groupWithSendOff } from './po-to-so'
 import { approvedEcho } from './so-text'
+import { ERPNEXT_SO_ATTEMPTS, JOB_ERPNEXT_SO, erpnextJobKey } from './erpnext-post'
 
 /**
  * The admin's decisions on a sales order. Every path ends in one conditional update of the approval row (still
@@ -45,6 +46,15 @@ export async function approveSalesOrder(
   })
   if (!decided) return { ok: false, text: null }
   await deps.store.updateSalesOrder(order.id, { status: 'approved', approvedBy: decider.userId, approvedAt: at }, ['pending_approval'])
+  if (deps.erpnext) {
+    // ERPNext build: Tierra posts the approved order to the ERP itself (erpnext-post.ts)
+    await deps.enqueue({
+      kind: JOB_ERPNEXT_SO,
+      payload: { salesOrderId: order.id },
+      idempotencyKey: erpnextJobKey(order),
+      maxAttempts: ERPNEXT_SO_ATTEMPTS,
+    })
+  }
   const group = await customerGroupFor(deps, order)
   await deps.enqueue({
     kind: JOB_SO_GROUP,

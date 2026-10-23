@@ -6,6 +6,7 @@ import type { SapSql } from '../sap/db'
 import type { EvolutionClient } from '../whatsapp/evolution'
 import type { FileStore } from '../files/store'
 import type { BotMode } from '../whatsapp/parse'
+import type { Erpnext } from '../erp/erpnext'
 import type { ApprovalIntentClassifier } from './approval-intent'
 import type { CallClassifier, ProceedClassifier } from './classifiers'
 import type { ChatModel } from './llm'
@@ -33,6 +34,8 @@ export type AgentDeps = {
   enqueue: (job: NewJob) => Promise<boolean>
   botMode: BotMode
   now: () => Date
+  /** ERP_BACKEND=erpnext: the ERPNext REST client and mirror. Null/absent with SAP (the office keys SAP itself). */
+  erpnext?: Erpnext | null
   /** The tool loop's time budget; 40 s unless a test shortens it. */
   agentBudgetMs?: number
 }

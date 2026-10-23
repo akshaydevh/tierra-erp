@@ -5,6 +5,7 @@ import { DEV_PASSWORD } from './db/seed-data'
 import type { BotMode } from './whatsapp/parse'
 import { DEFAULT_COUNTRY_CODE } from './whatsapp/people'
 import { DEFAULT_FILE_STORE } from './files/store'
+import type { ErpnextEnv } from './erp/erpnext'
 
 function loadDotEnv(): void {
   const path = join(process.cwd(), '.env')
@@ -52,6 +53,8 @@ export type Env = {
   fileStore: string
   /** The bucket for FILE_STORE=s3 (any S3-compatible service; path-style). */
   s3: { endpoint: string; bucket: string; region: string; accessKeyId: string; secretAccessKey: string; urlStyle: string }
+  /** ERP_BACKEND=erpnext (hackathon build): the read model mirrors ERPNext, writes go to its REST API. Else null. */
+  erpnext: ErpnextEnv | null
 }
 
 const DEV_EVOLUTION_API_KEY = 'tierra-evolution-key'
@@ -71,6 +74,24 @@ function countryCodeFrom(value: string | undefined): string {
   const digits = value.replace(/^\+/, '')
   if (!/^\d{1,3}$/.test(digits)) throw new Error('DEFAULT_COUNTRY_CODE must be 1 to 3 digits, e.g. 91')
   return digits
+}
+
+function erpnextFrom(): ErpnextEnv | null {
+  const backend = process.env.ERP_BACKEND ?? 'sap'
+  if (backend === 'sap') return null
+  if (backend !== 'erpnext') throw new Error('ERP_BACKEND must be sap or erpnext')
+  const required = ['ERP_DB_URL', 'ERPNEXT_API_KEY', 'ERPNEXT_API_SECRET'] as const
+  const missing = required.filter((name) => !process.env[name])
+  if (missing.length) throw new Error(`ERP_BACKEND=erpnext needs ${missing.join(', ')}`)
+  return {
+    url: process.env.ERPNEXT_URL || 'http://127.0.0.1:8080',
+    site: process.env.ERPNEXT_SITE || 'erp.localhost',
+    apiKey: process.env.ERPNEXT_API_KEY ?? '',
+    apiSecret: process.env.ERPNEXT_API_SECRET ?? '',
+    company: process.env.ERP_COMPANY || 'Tierra Food India',
+    dbUrl: process.env.ERP_DB_URL ?? '',
+    syncMs: Number(process.env.ERP_SYNC_MS ?? 60_000),
+  }
 }
 
 function botModeFrom(value: string | undefined): BotMode {
@@ -113,5 +134,6 @@ export function loadEnv(): Env {
       accessKeyId: process.env.S3_ACCESS_KEY_ID ?? '',
       secretAccessKey: process.env.S3_SECRET_ACCESS_KEY ?? '',
     },
+    erpnext: erpnextFrom(),
   }
 }

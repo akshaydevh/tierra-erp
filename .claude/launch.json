@@ -1,0 +1,21 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "backend-erpnext",
+      "runtimeExecutable": "bash",
+      "runtimeArgs": [
+        "erpnext/dev-backend.sh"
+      ],
+      "port": 3002
+    },
+    {
+      "name": "frontend-erpnext",
+      "runtimeExecutable": "bash",
+      "runtimeArgs": [
+        "erpnext/dev-frontend.sh"
+      ],
+      "port": 3000
+    }
+  ]
+}

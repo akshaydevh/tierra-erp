@@ -16,6 +16,7 @@ import { startWorker } from './jobs/worker'
 import { requeueTaskNotices } from './tasks/notify'
 import { HttpEvolution } from './whatsapp/evolution'
 import { createFileStore, fileStoreWarning } from './files/store'
+import { startErpnext } from './erp/erpnext'
 
 type Database = PostgresJsDatabase<typeof schema>
 
@@ -40,6 +41,8 @@ async function main() {
   const env = loadEnv()
   const sql = postgres(env.databaseUrl, { connection: { TimeZone: 'Asia/Kolkata' } })
   await migrate(sql)
+  // ERP_BACKEND=erpnext: the read model mirrors ERPNext instead of a SAP import
+  const erpnext = env.erpnext ? await startErpnext(sql, env.erpnext) : null
   const db = drizzle(sql, { schema })
   await seedDemo(db, env)
   const store = new DrizzleStore(db)
@@ -65,6 +68,7 @@ async function main() {
     sessionTtlMs: 1000 * 60 * 60 * 24 * 14,
     secureCookie: env.production,
     defaultCountryCode: env.defaultCountryCode,
+    erpnext,
   }
   const app = createApp(deps)
   void pointWebhookHere(deps)
@@ -84,6 +88,7 @@ async function main() {
     console.log(`${signal} received, stopping`)
     await new Promise<void>((resolve) => server.close(() => resolve()))
     await worker?.stop()
+    await erpnext?.stop()
     await sql.end({ timeout: 5 })
     process.exit(0)
   }
