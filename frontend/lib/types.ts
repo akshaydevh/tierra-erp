@@ -824,6 +824,24 @@ export type MyDayResponse = {
 
 export type NavCounts = { myDay: number; approvals: number }
 
+/** GET /api/vision: whether the computer-vision demo can run (it needs OPENAI_API_KEY), and on which model. */
+export type VisionStatus = { configured: boolean; model: string | null }
+
+export type HairnetVerdict = 'wearing' | 'not_wearing' | 'uncertain' | 'no_person'
+
+/** One webcam frame's hairnet check. Boxes are fractions (0 to 1) of the frame, origin top-left. */
+export type HairnetCheck = {
+  verdict: HairnetVerdict
+  headwear: 'hairnet' | 'bouffant_cap' | 'other_headwear' | 'none' | 'not_visible'
+  hairFullyCovered: boolean | null
+  confidence: number
+  reason: string
+  peopleCount: number
+  headBox: { x: number; y: number; width: number; height: number } | null
+}
+
+export type HairnetCheckResponse = { check: HairnetCheck; model: string; latencyMs: number }
+
 export type ProcurementReason = 'production' | 'expedite' | 'shortage'
 export type ProcurementRequestStatus = 'open' | 'done' | 'cancelled'
 

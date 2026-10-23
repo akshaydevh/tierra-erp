@@ -3,6 +3,7 @@ import { drizzle, type PostgresJsDatabase } from 'drizzle-orm/postgres-js'
 import postgres from 'postgres'
 import { readPurchaseOrder } from './agent/extract'
 import { readPhoto } from './agent/packet-reader'
+import { checkHairnet } from './vision/hairnet'
 import { createApprovalIntent } from './agent/approval-intent'
 import { createCallClassifier, createPdfClassifier, createProceedClassifier } from './agent/classifiers'
 import { createChatModel } from './agent/llm'
@@ -71,6 +72,9 @@ async function main() {
     secureCookie: env.production,
     defaultCountryCode: env.defaultCountryCode,
     erpnext,
+    vision: env.openaiApiKey
+      ? { model: env.openaiVisionModel, checkHairnet: (image, signal) => checkHairnet(image, env, signal) }
+      : null,
   }
   const app = createApp(deps)
   void pointWebhookHere(deps)

@@ -18,6 +18,7 @@ import { groupSendKey, sendForApproval } from './workflows/po-to-so'
 import type { EvolutionClient, GroupParticipant, MediaMessage, WhatsappGroup } from './whatsapp/evolution'
 import { parseWebhook, type BotMode, type IncomingMessage } from './whatsapp/parse'
 import { ownerPhoneFromInstances } from './whatsapp/qr'
+import { HairnetCheckError, type HairnetCheck } from './vision/hairnet'
 
 class FakeEvolution implements EvolutionClient {
   sent: Array<{ number: string; text: string; mentions: string[] }> = []
@@ -2406,5 +2407,70 @@ describe('P4: My Day, approvals and Tierra sales orders', () => {
     expect(bad.status).toBe(400)
     const missing = await ctx.app.request('/api/customer-pos/cpo_missing/review', { method: 'PUT', headers: { cookie: anju, 'content-type': 'application/json' }, body: JSON.stringify({ cardCode: 'ZC001' }) })
     expect(await missing.json()).toEqual({ error: 'That PO is no longer on record.' })
+  })
+})
+
+describe('computer vision: the hairnet check demo', () => {
+  const JPEG = `data:image/jpeg;base64,${Buffer.from([0xff, 0xd8, 0xff, 0xe0, 1, 2, 3]).toString('base64')}`
+  const SEEN: HairnetCheck = {
+    verdict: 'wearing',
+    headwear: 'hairnet',
+    hairFullyCovered: true,
+    confidence: 0.9,
+    reason: 'White mesh net covers all the hair.',
+    peopleCount: 1,
+    headBox: { x: 0.4, y: 0.1, width: 0.2, height: 0.3 },
+  }
+
+  async function post(app: ReturnType<typeof createApp>, cookie: string, body: unknown) {
+    return app.request('/api/vision/hairnet', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', cookie },
+      body: JSON.stringify(body),
+    })
+  }
+
+  it('checks a signed-in user\'s frame and says which model looked', async () => {
+    const ctx = await setup()
+    const frames: Buffer[] = []
+    ctx.deps.vision = {
+      model: 'gpt-vision-test',
+      checkHairnet: async (image) => {
+        frames.push(image)
+        return SEEN
+      },
+    }
+    const app = createApp(ctx.deps)
+    const cookie = await login(app, 'anju@tierra.test')
+    expect(await (await app.request('/api/vision', { headers: { cookie } })).json()).toEqual({ configured: true, model: 'gpt-vision-test' })
+    const response = await post(app, cookie, { image: JPEG })
+    expect(response.status).toBe(200)
+    expect(await response.json()).toMatchObject({ check: SEEN, model: 'gpt-vision-test' })
+    expect(frames[0]?.subarray(0, 3)).toEqual(Buffer.from([0xff, 0xd8, 0xff]))
+  })
+
+  it('refuses strangers, non-JPEGs and model failures plainly', async () => {
+    const ctx = await setup()
+    ctx.deps.vision = {
+      model: 'gpt-vision-test',
+      checkHairnet: async () => {
+        throw new HairnetCheckError('The vision model failed (500).')
+      },
+    }
+    const app = createApp(ctx.deps)
+    expect((await post(app, '', { image: JPEG })).status).toBe(401)
+    const cookie = await login(app, 'anju@tierra.test')
+    expect((await post(app, cookie, { image: 'data:image/png;base64,iVBORw0KGgo=' })).status).toBe(400)
+    expect((await post(app, cookie, { image: 'data:image/jpeg;base64,iVBORw0KGgo=' })).status).toBe(400)
+    const failed = await post(app, cookie, { image: JPEG })
+    expect(failed.status).toBe(502)
+    expect(await failed.json()).toEqual({ error: 'The vision model failed (500).' })
+  })
+
+  it('says computer vision is off without a key', async () => {
+    const ctx = await setup()
+    const cookie = await login(ctx.app, 'anju@tierra.test')
+    expect(await (await ctx.app.request('/api/vision', { headers: { cookie } })).json()).toEqual({ configured: false, model: null })
+    expect((await post(ctx.app, cookie, { image: JPEG })).status).toBe(503)
   })
 })

@@ -85,6 +85,7 @@ import { attendanceMonth, headcount, hrMeta, hrOrNull, leaveSummary, payrollSumm
 import { addMonths, lastDayOf } from './domain/months'
 import { dmAddress } from './agent/send'
 import { normalizePhone } from './whatsapp/people'
+import { HairnetCheckError, type HairnetCheck } from './vision/hairnet'
 
 export type AppDeps = AgentDeps & {
   webhookSecret: string
@@ -93,9 +94,14 @@ export type AppDeps = AgentDeps & {
   secureCookie?: boolean
   /** Country code for a 10-digit mobile number typed without one. Defaults to 91. */
   defaultCountryCode?: string
+  /** The computer-vision demo (a hairnet check on one webcam frame). Null or absent without OPENAI_API_KEY. */
+  vision?: { model: string; checkHairnet: (image: Buffer, signal?: AbortSignal) => Promise<HairnetCheck> } | null
 }
 
 const WEBHOOK_BODY_LIMIT = 16 * 1024 * 1024
+/** A webcam frame as a JPEG data URL; the page sends at most 1280px on the long edge, far under this. */
+const VISION_BODY_LIMIT = 8 * 1024 * 1024
+const JPEG_DATA_URL = 'data:image/jpeg;base64,'
 const LOGIN_FAILURE_LIMIT = 10
 const EMAIL_FAILURE_LIMIT = 20
 const LOGIN_WINDOW_MS = 15 * 60 * 1000
@@ -160,6 +166,10 @@ const poReviewSchema = z.object({
     )
     .max(60)
     .optional(),
+})
+
+const hairnetCheckSchema = z.object({
+  image: z.string().max(VISION_BODY_LIMIT).startsWith(JPEG_DATA_URL, 'Send the frame as a JPEG data URL'),
 })
 
 const MAX_DISPATCH_DAYS = 366
@@ -1433,6 +1443,32 @@ export function createApp(deps: AppDeps) {
       phoneNumber: null,
     })
     return c.json({ connection: publicConnection(connection) })
+  })
+
+  app.get('/api/vision', (c) => c.json({ configured: Boolean(deps.vision), model: deps.vision?.model ?? null }))
+
+  const visionLimit = bodyLimit({
+    maxSize: VISION_BODY_LIMIT,
+    onError: (c) => c.json({ error: 'That frame is too large' }, 413),
+  })
+
+  app.post('/api/vision/hairnet', visionLimit, async (c) => {
+    if (!deps.vision) return c.json({ error: 'Computer vision is off: the server has no OPENAI_API_KEY' }, 503)
+    const parsed = hairnetCheckSchema.safeParse(await c.req.json().catch(() => null))
+    if (!parsed.success) return c.json({ error: parsed.error.issues[0]?.message ?? 'Send a webcam frame' }, 400)
+    const image = Buffer.from(parsed.data.image.slice(JPEG_DATA_URL.length), 'base64')
+    // Every JPEG starts FF D8 FF.
+    if (image.length < 3 || image[0] !== 0xff || image[1] !== 0xd8 || image[2] !== 0xff) {
+      return c.json({ error: 'The frame is not a JPEG' }, 400)
+    }
+    const started = performance.now()
+    try {
+      const check = await deps.vision.checkHairnet(image, c.req.raw.signal)
+      return c.json({ check, model: deps.vision.model, latencyMs: Math.round(performance.now() - started) })
+    } catch (error) {
+      if (error instanceof HairnetCheckError) return c.json({ error: error.message }, 502)
+      throw error
+    }
   })
 
   const webhookLimit = bodyLimit({

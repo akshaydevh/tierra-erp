@@ -18,6 +18,7 @@ export const navItems: NavItem[] = [
   { href: '/procurement', label: 'Procurement', icon: 'bag' },
   { href: '/dispatch', label: 'Dispatch', icon: 'truck' },
   { href: '/inventory', label: 'Inventory', icon: 'warehouse' },
+  { href: '/vision', label: 'Computer vision', icon: 'camera' },
   { href: '/payments', label: 'Payments', icon: 'card', group: 'Finance', roles: ['admin', 'manager'] },
   { href: '/costing', label: 'Costing', icon: 'chart', roles: ['admin', 'manager'] },
   { href: '/payroll', label: 'Payroll and attendance', icon: 'users', roles: ['admin'] },
