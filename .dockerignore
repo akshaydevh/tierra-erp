@@ -1,0 +1,11 @@
+**/node_modules
+**/dist
+**/.env
+**/.venv
+var
+Reference
+graphify-out
+frontend
+whatsapp
+erpnext
+*.log
