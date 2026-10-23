@@ -100,6 +100,22 @@ describe.skipIf(!pg)('SAP read model on Postgres 18 (synthetic fixture)', () => 
       'SO/25-26/3',
       'SO/25-26/4',
     ])
+    // The data month and the twelve before it, empty ones as zero; the last matches sales this month.
+    expect(centre.charts.monthly).toHaveLength(13)
+    expect(centre.charts.monthly[0]).toEqual({ month: '2025-03', value: 0 })
+    expect(centre.charts.monthly.at(-1)).toEqual({ month: '2026-03', value: 8300 })
+    expect(centre.charts.windowFrom).toBe('2026-01-01')
+    expect(centre.charts.topItems).toEqual({
+      rows: [
+        { name: 'Zeta Cassava Chips 200g', value: 6904.76 },
+        { name: 'Zeta Banana Chips 100g', value: 1000 },
+      ],
+      other: 0,
+    })
+    expect(centre.charts.topCustomers).toEqual([
+      { name: 'Beta Retail LLP', value: 7250 },
+      { name: 'Alpha Snacks Pvt Ltd', value: 1050 },
+    ])
   })
 
   it('lists finished-goods stock with negative free', async () => {

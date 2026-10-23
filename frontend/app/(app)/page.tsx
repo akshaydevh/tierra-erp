@@ -1,6 +1,7 @@
 import { TaskBoard } from './task-board'
 import { DataAsOf, NotImported } from '@/components/data-as-of'
 import { Kpi, KpiStrip } from '@/components/kpi'
+import { SalesChartGrid } from '@/components/sales-charts'
 import { SalesOrderTable } from '@/components/sales-order-table'
 import { SectionHead } from '@/components/section-head'
 import { api, getMeta } from '@/lib/api'
@@ -67,6 +68,12 @@ export default async function CommandCentrePage() {
       ) : (
         <NotImported what="Sales, invoice and stock figures" />
       )}
+      {asOf && data.charts ? (
+        <section className="sec">
+          <SectionHead title="Sales" sub="Invoices up to the data date; cancelled ones are left out." zid="Zone 1 · Charts" />
+          <SalesChartGrid charts={data.charts} asOf={asOf} />
+        </section>
+      ) : null}
       <section className="sec">
         <SectionHead
           title="Task board"

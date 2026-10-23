@@ -180,6 +180,20 @@ export type CommandCentre = {
   }
   whatsapp: { status: WhatsappConnection['status']; phoneNumber: string | null }
   recentSalesOrders: SalesOrderRow[]
+  /** Null before the first import. */
+  charts: SalesCharts | null
+}
+
+export type ChartSlice = { name: string; value: number }
+
+export type SalesCharts = {
+  /** Invoiced value with tax per month ("2026-10"): the data month and the twelve before it. */
+  monthly: Array<{ month: string; value: number }>
+  /** Items by invoiced value before tax since windowFrom: the top five, and the rest summed. */
+  topItems: { rows: ChartSlice[]; other: number }
+  /** Customers by invoiced value with tax since windowFrom. */
+  topCustomers: ChartSlice[]
+  windowFrom: string
 }
 
 // Inventory --------------------------------------------------------------------

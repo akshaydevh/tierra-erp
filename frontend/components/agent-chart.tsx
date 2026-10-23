@@ -16,6 +16,8 @@ export type ChartSpec = {
   unit?: 'inr' | 'count' | 'kg' | 'pcs'
   stacked?: boolean
   note?: string
+  /** Pie: the last label is the remainder ("All other ..."), drawn in neutral grey rather than a series colour. */
+  other?: boolean
 }
 
 /** The spec from a reply's ```tierra-chart block, or null when it is not one the desk can draw. */
@@ -38,6 +40,11 @@ export function parseChart(json: string): ChartSpec | null {
 /** Categorical slots in fixed order (validated on the bubble surface); a series keeps its slot. */
 const SERIES = ['var(--series-1)', 'var(--series-2)', 'var(--series-3)', 'var(--series-4)', 'var(--series-5)', 'var(--series-6)', 'var(--series-7)', 'var(--series-8)']
 const HEIGHT = 220
+
+/** A pie slice's colour: its categorical slot, or neutral grey for the remainder. */
+function sliceColor(chart: ChartSpec, i: number): string {
+  return chart.other && i === chart.labels.length - 1 ? 'var(--chart-other)' : SERIES[i % SERIES.length]!
+}
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
 
 /** "2026-06" or "2026-06-01" -> "Jun 26"; anything else as written. */
@@ -115,7 +122,7 @@ function Tooltip({ chart, hover, width }: { chart: ChartSpec; hover: NonNullable
       <div className="charttiphead">{labelText(chart.labels[hover.index]!)}</div>
       {pie ? (
         <div className="charttiprow">
-          <span className="key" style={{ background: SERIES[hover.index % SERIES.length] }} />
+          <span className="key" style={{ background: sliceColor(chart, hover.index) }} />
           <span className="num">{fullValue(chart.series[0]!.values[hover.index]!, chart.unit)}</span>
           <span className="chartmuted">{total ? `${Math.round((chart.series[0]!.values[hover.index]! / total) * 100)}%` : ''}</span>
         </div>
@@ -152,7 +159,7 @@ function Axes({ chart, width }: { chart: ChartSpec; width: number }) {
       }
     }
   })
-  const bandLabel = horizontal ? Math.min(140, Math.max(72, width * 0.3)) : 0
+  const bandLabel = horizontal ? Math.min(200, Math.max(72, width * 0.34)) : 0
   const pad = horizontal
     ? { top: 8, right: chart.series.length === 1 ? 64 : 16, bottom: 24, left: bandLabel }
     : { top: 12, right: chart.type === 'line' && chart.series.length === 1 ? 52 : 12, bottom: 28, left: 56 }
@@ -339,7 +346,7 @@ function Donut({ chart, width }: { chart: ChartSpec; width: number }) {
       <path
         key={i}
         d={d}
-        fill={SERIES[i % SERIES.length]}
+        fill={sliceColor(chart, i)}
         className="chartslice"
         fillRule="evenodd"
         onPointerMove={(event) => {
@@ -363,7 +370,7 @@ function Donut({ chart, width }: { chart: ChartSpec; width: number }) {
       <ul className="chartlegend vertical">
         {chart.labels.map((label, i) => (
           <li key={i}>
-            <span className="key" style={{ background: SERIES[i % SERIES.length] }} />
+            <span className="key" style={{ background: sliceColor(chart, i) }} />
             <span>{label}</span>
             <span className="num chartmuted">{total ? `${Math.round((values[i]! / total) * 100)}%` : ''}</span>
           </li>

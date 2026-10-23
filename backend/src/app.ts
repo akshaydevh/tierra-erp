@@ -34,7 +34,7 @@ import { importMeta, isNotImported } from './queries/meta'
 import { cardInfo } from './queries/po'
 import { PRODUCTION_STATUSES, productionKpis, productionOrder, productionOrders, withoutComponentValues, withoutOrderValues } from './queries/production'
 import { PROCUREMENT_TABS, goodsReceipts, procurementKpis, purchaseOrders } from './queries/purchasing'
-import { ORDER_STATES, customerPos, orderBook, orderKpis, recentSalesOrders, salesOrder, salesSummary } from './queries/sales'
+import { ORDER_STATES, customerPos, orderBook, orderKpis, recentSalesOrders, salesCharts, salesOrder, salesSummary } from './queries/sales'
 import { isIsoDay, pageRequest } from './sap/db'
 import { completeTask, createTaskAndNotify, reassignTask } from './tasks/service'
 import { myDay } from './tasks/my-day'
@@ -416,18 +416,21 @@ export function createApp(deps: AppDeps) {
         },
         whatsapp,
         recentSalesOrders: [],
+        charts: null,
       })
     }
-    const [sales, stock, recent] = await Promise.all([
+    const [sales, stock, recent, charts] = await Promise.all([
       salesSummary(sap, meta.dataAsOf),
       inventoryKpis(sap),
       recentSalesOrders(sap, 5),
+      salesCharts(sap, meta.dataAsOf),
     ])
     return c.json({
       dataAsOf: meta.dataAsOf,
       kpis: { ...sales, fgShortItems: stock.fgShort },
       whatsapp,
       recentSalesOrders: recent,
+      charts,
     })
   })
 

@@ -365,6 +365,72 @@ export async function salesSummary(sql: SapSql, asOf: string | null): Promise<Sa
   }
 }
 
+/** Days the command centre's product and customer charts look back over, counting the data date. */
+export const CHART_WINDOW_DAYS = 90
+const TOP_ITEMS = 5
+const TOP_CUSTOMERS = 6
+
+export type ChartSlice = { name: string; value: number }
+
+export type SalesCharts = {
+  /** Invoiced value with tax per month: the data month (to the data date) and the twelve before it, so twelve are complete. */
+  monthly: Array<{ month: string; value: number }>
+  /** Items by invoiced value before tax over the chart window: the top five, and the rest summed. */
+  topItems: { rows: ChartSlice[]; other: number }
+  /** Customers by invoiced value with tax over the chart window. */
+  topCustomers: ChartSlice[]
+  /** First day of the chart window (the last is the data date). */
+  windowFrom: string
+}
+
+/** Item names in SAP carry doubled spaces ("Banana Chips  Classic"). */
+function label(value: unknown, fallback: unknown): string {
+  return (text(value) || text(fallback) || '').replace(/\s+/g, ' ').trim()
+}
+
+/** Command-centre charts. Invoices as in salesSummary: not cancelled, not cancellation mirrors, up to the data date. */
+export async function salesCharts(sql: SapSql, asOf: string): Promise<SalesCharts> {
+  const windowFrom = new Date(Date.parse(`${asOf}T00:00:00Z`) - (CHART_WINDOW_DAYS - 1) * 86_400_000).toISOString().slice(0, 10)
+  const [monthly, items, customers] = await Promise.all([
+    sql`
+      with months as (
+        select generate_series(date_trunc('month', ${asOf}::date) - interval '12 months', date_trunc('month', ${asOf}::date), interval '1 month')::date as m
+      )
+      select to_char(m, 'YYYY-MM') as month, coalesce(sum(i.total), 0) as value
+      from months
+      left join erp.invoices i
+        on date_trunc('month', i.doc_date) = m and i.doc_date <= ${asOf}::date and not i.cancelled and not i.is_cancellation
+      group by m
+      order by m`,
+    sql`
+      select l.item_code, max(l.item_name) as item_name, sum(l.line_total) as value
+      from erp.invoice_lines l
+      join erp.invoices i using (doc_entry)
+      where not i.cancelled and not i.is_cancellation and i.doc_date between ${windowFrom}::date and ${asOf}::date
+      group by l.item_code
+      having sum(l.line_total) > 0
+      order by value desc`,
+    sql`
+      select card_code, max(card_name) as card_name, sum(total) as value
+      from erp.invoices
+      where not cancelled and not is_cancellation and doc_date between ${windowFrom}::date and ${asOf}::date
+      group by card_code
+      having sum(total) > 0
+      order by value desc
+      limit ${TOP_CUSTOMERS}`,
+  ])
+  const ranked = items.map((row) => ({ name: label(row.item_name, row.item_code), value: num(row.value) }))
+  return {
+    monthly: monthly.map((row) => ({ month: String(row.month), value: num(row.value) })),
+    topItems: {
+      rows: ranked.slice(0, TOP_ITEMS),
+      other: ranked.slice(TOP_ITEMS).reduce((sum, row) => sum + row.value, 0),
+    },
+    topCustomers: customers.map((row) => ({ name: label(row.card_name, row.card_code), value: num(row.value) })),
+    windowFrom,
+  }
+}
+
 // ---- Agent reads. Each takes the caller's CardScope: a customer group only ever sees its own cards. ----------------
 
 /** How many rows an agent list returns; the total says how many matched. */

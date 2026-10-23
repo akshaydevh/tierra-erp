@@ -274,6 +274,7 @@ describe('auth and preview reads', () => {
       kpis: { openSalesOrders: 0, fgShortItems: 0 },
       whatsapp: { status: 'disconnected' },
       recentSalesOrders: [],
+      charts: null,
     })
     for (const path of ['/api/inventory', '/api/orders', '/api/dispatch', '/api/production', '/api/procurement']) {
       const response = await ctx.app.request(path, { headers: { cookie } })
