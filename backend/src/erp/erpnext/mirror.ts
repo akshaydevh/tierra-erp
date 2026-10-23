@@ -121,9 +121,31 @@ export class ErpnextMirror {
 
   constructor(
     private sql: SapSql,
-    erpDbUrl: string,
+    private erpDbUrl: string,
   ) {
     this.pool = mysql.createPool({ uri: erpDbUrl, connectionLimit: 2, dateStrings: true, decimalNumbers: false })
+  }
+
+  /**
+   * An ERP_DB_URL without a database (mysql://user:pw@host:3306/) finds the ERPNext site database itself: the one
+   * database that has tabSales Order. A hosted ERPNext names its site database at random.
+   */
+  private async useSiteDatabase(): Promise<void> {
+    if (new URL(this.erpDbUrl).pathname.replace(/^\//, '')) return
+    const [rows] = await this.pool.query<mysql.RowDataPacket[]>(
+      `select table_schema as s from information_schema.tables where table_name = 'tabSales Order'`,
+    )
+    if (rows.length !== 1) {
+      throw new Error(`ERP_DB_URL names no database and ${rows.length} databases have ERPNext tables`)
+    }
+    await this.pool.end()
+    this.pool = mysql.createPool({
+      uri: this.erpDbUrl,
+      database: rows[0].s,
+      connectionLimit: 2,
+      dateStrings: true,
+      decimalNumbers: false,
+    })
   }
 
   async close(): Promise<void> {
@@ -147,6 +169,7 @@ export class ErpnextMirror {
 
   /** Creates the copies (and new columns: a custom field added later) and the id map. Safe to run again. */
   async prepare(): Promise<void> {
+    await this.useSiteDatabase()
     const cols = await this.columns()
     const [{ has_schema }] = await this.sql`select to_regnamespace('erpnext') is not null as has_schema`
     if (!has_schema) await this.sql.unsafe(`create schema erpnext`)
