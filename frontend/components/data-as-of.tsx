@@ -2,17 +2,25 @@ import type { ReactNode } from 'react'
 import { day, dayTime } from '@/lib/format'
 import type { Meta } from '@/lib/types'
 
-/** One line saying how fresh the SAP figures are. `children` sits at the right (e.g. WhatsApp status). */
+/** One line saying how fresh the ERP figures are. `children` sits at the right (e.g. WhatsApp status). */
 export function DataAsOf({ meta, children }: { meta: Meta; children?: ReactNode }) {
   const imported = Boolean(meta.dataAsOf)
+  // the ERPNext build's read model names itself in backup; the copy is live, so "synced", not "imported"
+  const erpnext = meta.backup === 'ERPNext'
+
   return (
     <div className={imported ? 'asof' : 'asof missing'}>
       <span className="dot" aria-hidden="true" />
       <span className="asoftext">
         {imported ? (
           <>
-            SAP data as of <b>{day(meta.dataAsOf)}</b>
-            {meta.importedAt ? <span className="asofsub"> · imported {dayTime(meta.importedAt)}</span> : null}
+            {erpnext ? 'ERPNext' : 'SAP'} data as of <b>{day(meta.dataAsOf)}</b>
+            {meta.importedAt ? (
+              <span className="asofsub">
+                {' '}
+                · {erpnext ? 'synced' : 'imported'} {dayTime(meta.importedAt)}
+              </span>
+            ) : null}
           </>
         ) : (
           <b>SAP data not imported yet</b>

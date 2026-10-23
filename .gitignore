@@ -21,3 +21,4 @@ __pycache__
 *.csv.gz
 fixture*.sql
 !*.synthetic.sql
+var/

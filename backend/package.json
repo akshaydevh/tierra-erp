@@ -21,6 +21,7 @@
     "@typesafe-ai/sdk": "^0.6.0",
     "drizzle-orm": "^0.44.5",
     "hono": "^4.9.8",
+    "mysql2": "^3.24.6",
     "pdf-parse": "^1.1.1",
     "pdfmake": "^0.2.23",
     "postgres": "^3.4.7",
