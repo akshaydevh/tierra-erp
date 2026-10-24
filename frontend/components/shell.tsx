@@ -5,6 +5,7 @@ import { useEffect, useState } from 'react'
 import { usePathname, useRouter } from 'next/navigation'
 import { Icon } from './icon'
 import { Logo } from './logo'
+import { NavPendingProvider, NavProgressBar, RouteSkeleton, usePendingPath } from './nav-progress'
 import { navFor, titleForPath } from '@/lib/nav'
 import { roleLabel, type Me, type NavCounts } from '@/lib/types'
 
@@ -51,18 +52,26 @@ function initials(name: string): string {
     .toUpperCase()
 }
 
-export function Shell({
-  user,
-  eyebrow,
-  children,
-}: {
+type ShellProps = {
   user: Me
   eyebrow: string
   children: React.ReactNode
-}) {
+}
+
+export function Shell(props: ShellProps) {
+  return (
+    <NavPendingProvider>
+      <ShellFrame {...props} />
+    </NavPendingProvider>
+  )
+}
+
+function ShellFrame({ user, eyebrow, children }: ShellProps) {
   const path = usePathname()
+  // While another page loads, its title and nav item show at once.
+  const shown = usePendingPath() ?? path
   const router = useRouter()
-  const title = titleForPath(path)
+  const title = titleForPath(shown)
   const counts = useNavCounts(path)
   let groupSeen = ''
 
@@ -85,7 +94,7 @@ export function Shell({
           {navFor(user.role).map((item) => {
             const showGroup = item.group && item.group !== groupSeen
             if (item.group) groupSeen = item.group
-            const active = item.href === '/' ? path === '/' : path === item.href || path.startsWith(`${item.href}/`)
+            const active = item.href === '/' ? shown === '/' : shown === item.href || shown.startsWith(`${item.href}/`)
             const badge = badgeFor(item.href, counts)
             return (
               <span key={item.href} style={{ display: 'contents' }}>
@@ -105,7 +114,7 @@ export function Shell({
           })}
         </nav>
         <div className="foot">
-          <Link href="/settings" className={path === '/settings' ? 'on' : undefined}>
+          <Link href="/settings" className={shown === '/settings' ? 'on' : undefined}>
             <Icon name="sliders" />
             <span>Settings</span>
           </Link>
@@ -129,7 +138,9 @@ export function Shell({
             <div className="av">{initials(user.name)}</div>
           </div>
         </header>
+        <NavProgressBar />
         <main className="page" id="content">
+          <RouteSkeleton />
           {children}
         </main>
       </div>

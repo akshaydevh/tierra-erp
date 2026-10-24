@@ -1,4 +1,3 @@
-import { TaskBoard } from './task-board'
 import { DataAsOf, NotImported } from '@/components/data-as-of'
 import { Kpi, KpiStrip } from '@/components/kpi'
 import { SalesChartGrid } from '@/components/sales-charts'
@@ -74,14 +73,6 @@ export default async function CommandCentrePage() {
           <SalesChartGrid charts={data.charts} asOf={asOf} />
         </section>
       ) : null}
-      <section className="sec">
-        <SectionHead
-          title="Task board"
-          sub="Add work, give it a category, and assign it. Drag a card to move it."
-          zid="Zone 1 · Tasks"
-        />
-        <TaskBoard />
-      </section>
       <section className="sec">
         <SectionHead title="Recent sales orders" sub="The five newest sales orders in SAP" zid="Zone 1 · Orders" />
         <SalesOrderTable

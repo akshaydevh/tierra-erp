@@ -1,6 +1,7 @@
 'use client'
 
 import { useRouter } from 'next/navigation'
+import { startNavigation } from './nav-progress'
 import { useId, type FormEvent } from 'react'
 import { hrefFor, type Query } from '@/lib/query'
 
@@ -26,7 +27,10 @@ export function DayPicker({
 
   function go(date: string) {
     // Typing a year digit by digit passes through dates like 0002-07-23; wait for a real one.
-    if (/^(19|20)\d{2}-\d{2}-\d{2}$/.test(date)) router.push(hrefFor(path, query, { date }))
+    if (!/^(19|20)\d{2}-\d{2}-\d{2}$/.test(date)) return
+    const href = hrefFor(path, query, { date })
+    startNavigation(href)
+    router.push(href)
   }
 
   function submit(event: FormEvent<HTMLFormElement>) {

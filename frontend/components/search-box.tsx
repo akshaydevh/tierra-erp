@@ -1,6 +1,7 @@
 'use client'
 
 import { useRouter } from 'next/navigation'
+import { startNavigation } from './nav-progress'
 import { useId, useRef, type FormEvent } from 'react'
 import { hrefFor, type Query } from '@/lib/query'
 
@@ -26,7 +27,9 @@ export function SearchBox({
   const keep = Object.entries(query).filter(([key, value]) => key !== 'q' && key !== 'page' && value)
 
   function go(q: string) {
-    router.push(hrefFor(path, query, { q: q.trim() || undefined, page: undefined }))
+    const href = hrefFor(path, query, { q: q.trim() || undefined, page: undefined })
+    startNavigation(href)
+    router.push(href)
   }
 
   function submit(event: FormEvent<HTMLFormElement>) {

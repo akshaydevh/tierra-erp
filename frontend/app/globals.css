@@ -259,7 +259,7 @@ td .sub { font-weight: 400; }
   min-width: 0;
 }
 /* The oval is about 1.54:1, so 112px wide is 73px tall: clear of the first nav item. */
-.brand { height: 108px; padding: 16px 24px 18px; display: flex; align-items: center; }
+.brand { height: 108px; padding: 16px 24px 18px; display: flex; align-items: center; justify-content: center; }
 .brand .tierra-logo { width: 112px; }
 .nav { padding: 0 16px 16px; display: flex; flex-direction: column; gap: 4px; overflow-y: auto; flex: 1; }
 .nav a, .foot a, .foot button {
@@ -1149,4 +1149,39 @@ td .sub { font-weight: 400; }
 .dashchart .charttitle { font-size: 14px; font-weight: 600; }
 @media (max-width: 1080px) {
   .dashcharts { grid-template-columns: minmax(0, 1fr); }
+}
+
+/* Loading (components/nav-progress.tsx): a bar under the top bar; a new query dims the page, a new page shows the skeleton */
+/* Zero height between the top bar and the page, so the bar sits on the top bar's bottom edge whatever its height. */
+.navprogress { position: relative; z-index: 30; height: 0; pointer-events: none; }
+.navprogress::before {
+  content: "";
+  position: absolute;
+  top: -2px;
+  left: 0;
+  height: 2px;
+  width: 40%;
+  background: var(--accent);
+  animation: navslide 1.1s ease-in-out infinite;
+}
+.mainwrap { overflow-x: hidden; }
+@keyframes navslide { from { transform: translateX(-100%); } to { transform: translateX(250%); } }
+.page[data-pending="query"] > * { opacity: 0.45; transition: opacity 160ms ease 120ms; pointer-events: none; }
+.page[data-pending="route"] > :not(.pageloading) { display: none; }
+.pageloading { display: flex; flex-direction: column; gap: 24px; }
+.skel { border-radius: 8px; background: linear-gradient(90deg, #eef0ee 0%, #f6f7f6 50%, #eef0ee 100%); background-size: 200% 100%; animation: skelshine 1.4s ease-in-out infinite; }
+@keyframes skelshine { from { background-position: 100% 0; } to { background-position: -100% 0; } }
+.skelstrip { height: 44px; border-radius: 12px; }
+.skelcard { display: flex; align-items: center; gap: 14px; padding: 24px; }
+.skelchip { width: 40px; height: 40px; flex: none; border-radius: 12px; }
+.skellines { flex: 1; display: flex; flex-direction: column; gap: 10px; }
+.skelline { height: 12px; }
+.skelline.short { width: 55%; }
+.skelline.big { width: 40%; height: 24px; }
+.skelhead { height: 20px; width: 180px; }
+.skelblock { display: flex; flex-direction: column; gap: 18px; padding: 24px; }
+.skelblock .skelline:nth-child(odd) { width: 92%; }
+.skelblock .skelline:nth-child(even) { width: 76%; }
+@media (prefers-reduced-motion: reduce) {
+  .navprogress::before, .skel { animation: none; }
 }
