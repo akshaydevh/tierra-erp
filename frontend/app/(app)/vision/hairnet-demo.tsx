@@ -354,7 +354,6 @@ export function HairnetDemo({ configured, model }: { configured: boolean; model:
               </button>
             ) : null}
           </div>
-          <p className="stamp">Model: {model ?? 'none'}</p>
         </div>
 
         {latest ? (
