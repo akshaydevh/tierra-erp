@@ -112,12 +112,7 @@ export function startWorker(deps: AgentDeps, options: WorkerOptions = {}): Worke
   const pollMs = options.pollMs ?? 500
   const leaseMs = options.leaseMs ?? LEASE_MS
   let stopped = false
-  let wake = () => {}
-  const stopping = new Promise<void>((resolve) => {
-    wake = resolve
-  })
-  const pause = (ms: number) =>
-    Promise.race([new Promise<void>((resolve) => setTimeout(resolve, ms).unref()), stopping])
+  const { pause, wakeAll } = sleeper()
 
   const repeat = async (label: string, everyMs: number, work: () => Promise<boolean>) => {
     while (!stopped) {
@@ -156,10 +151,37 @@ export function startWorker(deps: AgentDeps, options: WorkerOptions = {}): Worke
   return {
     async stop() {
       stopped = true
-      wake()
+      wakeAll()
       await Promise.all(loops)
     },
   }
+}
+
+/**
+ * Sleeps that stop() can cut short. Each sleep forgets itself when it ends. Racing every sleep against one
+ * long-lived "stopping" promise instead would leave a reaction on that promise per sleep, never freed: about
+ * 100 MB a day at the worker's 500 ms poll.
+ */
+export function sleeper(): { pause: (ms: number) => Promise<void>; wakeAll: () => void; pending: () => number } {
+  const sleeping = new Set<() => void>()
+  let awake = false
+  const pause = (ms: number) =>
+    new Promise<void>((resolve) => {
+      if (awake) return resolve()
+      const done = () => {
+        clearTimeout(timer)
+        sleeping.delete(done)
+        resolve()
+      }
+      const timer = setTimeout(done, ms)
+      timer.unref()
+      sleeping.add(done)
+    })
+  const wakeAll = () => {
+    awake = true
+    for (const done of [...sleeping]) done()
+  }
+  return { pause, wakeAll, pending: () => sleeping.size }
 }
 
 /**

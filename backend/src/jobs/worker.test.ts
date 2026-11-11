@@ -4,7 +4,17 @@ import { MemoryStore } from '../db/memory'
 import type { JobRecord } from '../db/types'
 import type { EvolutionClient } from '../whatsapp/evolution'
 import type { IncomingMessage } from '../whatsapp/parse'
-import { KEEP_JOBS_MS, incomingJob, inlineEnqueue, retryDelayMs, runJob, settleJob, startWorker, workOnce } from './worker'
+import {
+  KEEP_JOBS_MS,
+  incomingJob,
+  inlineEnqueue,
+  retryDelayMs,
+  runJob,
+  settleJob,
+  sleeper,
+  startWorker,
+  workOnce,
+} from './worker'
 
 const now = new Date('2026-10-01T09:00:00.000Z')
 
@@ -346,3 +356,23 @@ describe('task notice jobs', () => {
   })
 })
 
+
+describe('sleeper', () => {
+  it('forgets each sleep once it ends, so a long-running poll loop holds no memory', async () => {
+    const { pause, pending } = sleeper()
+    for (let i = 0; i < 50; i++) await pause(0)
+    expect(pending()).toBe(0)
+  })
+
+  it('wakes every sleeper at once, and later sleeps return straight away', async () => {
+    const { pause, wakeAll, pending } = sleeper()
+    const started = Date.now()
+    const sleeps = [pause(60_000), pause(60_000)]
+    expect(pending()).toBe(2)
+    wakeAll()
+    await Promise.all(sleeps)
+    await pause(60_000)
+    expect(pending()).toBe(0)
+    expect(Date.now() - started).toBeLessThan(1_000)
+  })
+})
