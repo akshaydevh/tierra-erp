@@ -596,17 +596,23 @@ async function closeAfterSend(deps: FlowDeps, order: SalesOrder, approval: Appro
 /**
  * so.send_to_group: the APPROVED customer copy, at most once, to the party's mapped group. Nothing mapped: an office
  * task to map one. The registry row is written before the send; a row found still sending is never resent.
+ * With ERPNext the order may already be posted and linked (in_sap) when this runs: the copy still goes, and the
+ * order stays in_sap (sentAt records the copy).
  */
 export async function sendToGroup(deps: FlowDeps, approvalId: string): Promise<void> {
   const approval = await deps.store.getApproval(approvalId)
   if (!approval || approval.status !== 'approved') return
   const order = await deps.store.getSalesOrder(approval.subjectId)
-  if (!order || order.version !== approval.version || order.status !== 'approved') return
+  if (!order || order.version !== approval.version || order.sentAt) return
+  if (order.status !== 'approved' && order.status !== 'in_sap') return
+  const linked = order.status === 'in_sap'
+  const after = (status: 'sent' | 'approved_unsent', patch: { sentAt?: string } = {}) =>
+    deps.store.updateSalesOrder(order.id, linked ? patch : { status, ...patch }, [order.status])
   const group = await customerGroupFor(deps, order)
   const party = await partyLabel(deps, order.partyGroupId, order.cardCode)
   if (!group) {
     // approved, but nothing went to the customer: never "sent"
-    await deps.store.updateSalesOrder(order.id, { status: 'approved_unsent' }, ['approved'])
+    await after('approved_unsent')
     const off = await groupWithSendOff(deps, order)
     if (off) {
       await tellAdmin(deps, `${order.docNo} is approved. Sales orders are switched off for *${off}*, so nothing was sent to the customer.`, approval)
@@ -652,7 +658,7 @@ export async function sendToGroup(deps: FlowDeps, approvalId: string): Promise<v
     // A send was started before (this job ran already). It is never repeated; what it got to decides the status.
     if (existing.status === 'sent') {
       // the send went out and the worker died before the order was updated
-      if (await deps.store.updateSalesOrder(order.id, { status: 'sent', sentAt: deps.now().toISOString() }, ['approved'])) {
+      if (await after('sent', { sentAt: deps.now().toISOString() })) {
         await tellAdmin(deps, `Sent ${order.docNo} to *${group.subject}*.`, approval)
         await closeAfterSend(deps, order, approval, group.subject)
       }
@@ -670,7 +676,7 @@ export async function sendToGroup(deps: FlowDeps, approvalId: string): Promise<v
       subjectId: approval.id,
       kind: 'review',
     })
-    if (await deps.store.updateSalesOrder(order.id, { status: 'approved_unsent' }, ['approved'])) {
+    if (await after('approved_unsent')) {
       await tellAdmin(deps, `I could not confirm that ${order.docNo} reached *${group.subject}*. The office will check the group.`, approval)
       await closeAfterSend(deps, order, approval, null)
     }
@@ -685,7 +691,7 @@ export async function sendToGroup(deps: FlowDeps, approvalId: string): Promise<v
     media: pdf.content.toString('base64'),
   })
   await deps.store.completeOutbound(key, sent.messageId)
-  await deps.store.updateSalesOrder(order.id, { status: 'sent', sentAt: deps.now().toISOString() }, ['approved'])
+  await after('sent', { sentAt: deps.now().toISOString() })
   await tellAdmin(deps, `Sent ${order.docNo} to *${group.subject}*.`, approval)
   await closeAfterSend(deps, order, approval, group.subject)
 }

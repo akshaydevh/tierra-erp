@@ -16,8 +16,9 @@ export const ERPNEXT_SO_ATTEMPTS = 5
 /** The finished-goods warehouse orders reserve from (SAP FG01). */
 const FG_WAREHOUSE = 'FG01'
 
-export function erpnextJobKey(order: Pick<SalesOrder, 'id' | 'version'>): string {
-  return `${JOB_ERPNEXT_SO}:${order.id}:${order.version}`
+/** One per approval decision: a *stop* cancels the post, and approving again schedules a new one. */
+export function erpnextJobKey(order: Pick<SalesOrder, 'id' | 'version'>, decidedAt: string): string {
+  return `${JOB_ERPNEXT_SO}:${order.id}:${order.version}:${Date.parse(decidedAt)}`
 }
 
 export type PostedOrder = { name: string; posted: boolean }
@@ -59,7 +60,7 @@ export async function postSalesOrderToErpnext(deps: AgentDeps, salesOrderId: str
   const erpnext = deps.erpnext
   if (!erpnext) return null
   const order = await deps.store.getSalesOrder(salesOrderId)
-  if (!order || order.status === 'cancelled' || order.status === 'rejected') return null
+  if (!order || !['approved', 'approved_unsent', 'sent', 'in_sap'].includes(order.status)) return null
   const client = erpnext.client
   const existing = await client.list<{ name: string }>(
     'Sales Order',

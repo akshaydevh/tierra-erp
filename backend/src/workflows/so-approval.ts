@@ -47,11 +47,13 @@ export async function approveSalesOrder(
   if (!decided) return { ok: false, text: null }
   await deps.store.updateSalesOrder(order.id, { status: 'approved', approvedBy: decider.userId, approvedAt: at }, ['pending_approval'])
   if (deps.erpnext) {
-    // ERPNext build: Tierra posts the approved order to the ERP itself (erpnext-post.ts)
+    // ERPNext build: Tierra posts the approved order to the ERP itself (erpnext-post.ts), once *stop* can no longer
+    // put it back
     await deps.enqueue({
       kind: JOB_ERPNEXT_SO,
       payload: { salesOrderId: order.id },
-      idempotencyKey: erpnextJobKey(order),
+      runAfter: new Date(Date.parse(at) + SEND_WINDOW_MS),
+      idempotencyKey: erpnextJobKey(order, at),
       maxAttempts: ERPNEXT_SO_ATTEMPTS,
     })
   }
@@ -83,8 +85,15 @@ export async function stopGroupSend(deps: AgentDeps, decider: Decider, approvalI
       if (recent && !started) started = approval
       continue
     }
-    if (!(await deps.store.cancelQueuedJobs(JOB_SO_GROUP, { approvalId: approval.id }))) continue
     const order = await deps.store.getSalesOrder(approval.subjectId)
+    if (order && order.status !== 'approved') {
+      // already posted to ERPNext (in_sap): it cannot be put back
+      const recent = approval.decidedAt && deps.now().getTime() - Date.parse(approval.decidedAt) < 10 * 60_000
+      if (recent && !started) started = approval
+      continue
+    }
+    if (!(await deps.store.cancelQueuedJobs(JOB_SO_GROUP, { approvalId: approval.id }))) continue
+    await deps.store.cancelQueuedJobs(JOB_ERPNEXT_SO, { salesOrderId: approval.subjectId })
     await deps.store.transitionApproval(approval.id, approval.version, 'approved', {
       status: 'pending',
       decidedBy: null,

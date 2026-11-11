@@ -605,4 +605,33 @@ describe.skipIf(!pg)('PO -> TSO -> approval -> customer group', () => {
     const aged = await absorbStockAdjustments({ ...w.deps, now: () => new Date(Date.now() + 15 * 24 * 60 * 60_000) })
     expect(aged).toEqual([expect.objectContaining({ itemCode: 'ZOILP', note: 'No GRN in SAP after 14 days; no longer counted.' })])
   })
+
+  it('still sends the customer copy when the order is linked to its ERP order inside the 60 s window (ERPNext posts it)', async () => {
+    // a world of its own: the shared one has spent its stock by now
+    const e = await world('po_to_so_erp')
+    try {
+      await pdfFromAlex(e)
+      await later(e, 3_000)
+      const [approval] = await e.conn.store.listApprovals({ status: 'pending' })
+      const order = (await e.conn.store.getSalesOrder(approval!.subjectId))!
+      await text(e, ALEX, 'approve')
+      expect((await e.conn.store.getApproval(approval!.id))!.status).toBe('approved')
+      // the ERP order is posted and linked before the group send runs: too late to stop, the copy still goes
+      await e.conn.store.updateSalesOrder(order.id, { status: 'in_sap', sapDocEntry: 990, sapDocNo: 'SAL-ORD-TEST' }, ['approved'])
+      await text(e, ALEX, 'stop')
+      expect(toAlex(e).at(-1)).toBe(`Too late — ${order.docNo} was already being sent to the customer group.`)
+      await later(e, 61_000)
+      expect(e.media.filter((row) => row.number === GROUP).map((row) => row.caption)).toEqual([
+        `${BOT}Sales order ${order.docNo} for PO 4400099999, delivery 01-Apr.`,
+      ])
+      expect(toAlex(e).at(-1)).toBe(`Sent ${order.docNo} to *Northwind – Tierra*.`)
+      const sent = (await e.conn.store.getSalesOrder(order.id))!
+      expect(sent.status).toBe('in_sap')
+      expect(sent.sentAt).not.toBeNull()
+      await sendToGroup(e.deps, approval!.id)
+      expect(e.media.filter((row) => row.number === GROUP).length).toBe(1)
+    } finally {
+      await e.conn.close()
+    }
+  })
 })
